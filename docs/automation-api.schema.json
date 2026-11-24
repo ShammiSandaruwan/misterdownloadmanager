@@ -142,9 +142,31 @@
             "null"
           ]
         },
+        "exists": {
+          "description": "`Complete`: whether its file (a torrent's folder) is still at `path`: false once it was\nmoved or deleted. Null while not looked at yet, and for the other statuses.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "file": {
           "description": "The file's name.",
           "type": "string"
+        },
+        "finished": {
+          "description": "`Complete`: when it finished, in seconds since 1970 (null when the list doesn't know).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "icon": {
+          "description": "The browser popup's list (#1496): its file type icon, a key of [`RecentAnswer::icons`].",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "id": {
           "description": "What the actions take (`ids`); never reused.",
@@ -152,9 +174,29 @@
           "minimum": 0,
           "type": "integer"
         },
+        "kind": {
+          "description": "What downloads it when it isn't a plain file: `video` (from a page, by yt-dlp),\n`torrent`, `gallery` (by gallery-dl). Null: a file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "left": {
+          "description": "Seconds left at the speed it goes now, while it downloads with a known size.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "path": {
           "description": "Where it is saved: the file, or a torrent's folder.",
           "type": "string"
+        },
+        "redownload": {
+          "description": "It can be downloaded again from the start (Redownload): a file that isn't running.",
+          "type": "boolean"
         },
         "size": {
           "description": "Its size in bytes; null while unknown.",
@@ -209,6 +251,31 @@
       "required": [
         "error"
       ],
+      "type": "object"
+    },
+    "LinksPart": {
+      "description": "One part of a page's links ([`Command::links_part`]): the browser's extension sends a list\nlonger than the native host takes at once ([`MAX_MESSAGE`]) in parts, each with the page's\nreferrer and cookies, and the app puts them back together into one list.",
+      "properties": {
+        "batch": {
+          "default": "",
+          "description": "The same in every part of one list, and in no other list's (random, made by the\nextension): letters, digits and `-`, at most 64.",
+          "type": "string"
+        },
+        "count": {
+          "default": 0,
+          "description": "How many parts the list came in (at most [`MAX_LINK_PARTS`]).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "index": {
+          "default": 0,
+          "description": "This part's place in the list, from 0.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "ListAnswer": {
@@ -319,6 +386,160 @@
       ],
       "type": "object"
     },
+    "RecentAct": {
+      "description": "One of the browser popup's buttons on a download ([`Command::recent_act`], #1496).",
+      "properties": {
+        "act": {
+          "default": "",
+          "description": "One of [`RECENT_ACTS`].",
+          "type": "string"
+        },
+        "id": {
+          "default": 0,
+          "description": "The download (its `id` in the list); none for `clear-done`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RecentActAnswer": {
+      "description": "[`crate::Command::recent_act`]'s answer: done, or why not.",
+      "properties": {
+        "done": {
+          "default": false,
+          "type": "boolean"
+        },
+        "why": {
+          "description": "Why not: one of [`recent_why`]'s.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RecentAnswer": {
+      "description": "The browser popup's list of downloads (#1496), [`crate::Command::recent`]'s answer: the\nnewest that match its search and filter, how many match each filter, and the file type icons\nit lacked. Within [`RECENT_BUDGET`] bytes, so the native host's message to the browser stays\nunder its 1 MB limit.",
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/RecentCounts",
+          "default": {
+            "all": 0,
+            "done": 0,
+            "failed": 0,
+            "running": 0
+          },
+          "description": "How many match the search under each filter (all of them, not only those answered)."
+        },
+        "downloads": {
+          "default": [],
+          "description": "Newest first, at most the `limit` asked for.",
+          "items": {
+            "$ref": "#/$defs/DownloadInfo"
+          },
+          "type": "array"
+        },
+        "icons": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "The icons the popup lacked, by key: `data:` addresses of PNG pictures (an SVG one for a\nLinux desktop's scalable icon theme), the system's own for each type.",
+          "type": "object"
+        },
+        "running": {
+          "default": 0,
+          "description": "Downloads running now, whatever the search (the toolbar button's count).",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "share": {
+          "default": false,
+          "description": "MDM can open this system's share sheet for a file (Windows, macOS: Linux has none).",
+          "type": "boolean"
+        },
+        "speed": {
+          "default": 0,
+          "description": "The total download speed, bytes per second.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RecentAsk": {
+      "description": "The browser popup's list of downloads ([`Command::recent`], #1496): which ones, and the file\ntype icons it lacks.",
+      "properties": {
+        "filter": {
+          "default": "",
+          "description": "One of [`RECENT_FILTERS`]: every download, those running, complete, or failed.",
+          "type": "string"
+        },
+        "have": {
+          "default": [],
+          "description": "The file type icons the popup has already (their keys): not sent again.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "default": 0,
+          "description": "The most downloads answered, newest first (at most [`RECENT_MAX`]); 0: none, only the\ncounts (the toolbar button's count of running downloads).",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "px": {
+          "default": 0,
+          "description": "The icons' side in pixels (the popup's size for them at the screen's scale), 16 to 64.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "search": {
+          "default": "",
+          "description": "Words to find in the file's name or its address (case doesn't matter); empty: all.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RecentCounts": {
+      "description": "How many downloads match the popup's search under each of its filters.",
+      "properties": {
+        "all": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "done": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "Request": {
       "description": "One request line: the token from ipc.json and the command's fields.",
       "properties": {
@@ -341,6 +562,13 @@
         "category": {
           "default": null,
           "description": "A category for `url` (its `key` in the list's `categories`); none: by the file's type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checksum": {
+          "description": "The checksum the finished file must have, as the command line takes it (`sha256:…`, a\nbare hex value, …): `mdm_engine::verify::Hash` reads it.",
           "type": [
             "string",
             "null"
@@ -389,6 +617,18 @@
             "null"
           ]
         },
+        "hidden": {
+          "default": false,
+          "description": "`/fromhost` (beyond IDM, #1333): started by the browser native messaging host:\nstarts hidden without marking an OS session login.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The hand-over's own id (#1651), random, made by the one sending it: a command sent again\nwith the same id, because its answer never came (lost on the way, or later than the\nsender waited), is answered `ok` and not given to the app twice. Letters, digits and `-`,\nat most 64; none (an older sender's): taken as it comes. Questions (those answered with\nmore than `ok`) aren't sent again, and carry none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "ids": {
           "default": [],
           "items": {
@@ -397,6 +637,13 @@
             "type": "integer"
           },
           "type": "array"
+        },
+        "include_site": {
+          "description": "That button's Undo (#404): the host name `exclude_site` listed is taken off the excluded\nsites again (a pattern of the user's own that covers it stays).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "later": {
           "default": false,
@@ -410,6 +657,17 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "links_part": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinksPart"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "With `links`: which part of a page's list they are, when the list was too long for one\nmessage from the browser ([`MAX_MESSAGE`]); the app adds the list once all its parts are\nin. None: the whole list (an older extension's, or a short one)."
         },
         "mime": {
           "default": null,
@@ -425,6 +683,20 @@
             "null"
           ]
         },
+        "origin": {
+          "description": "From the browser (#900): the `Origin` its page's player sent with a video's stream or\nfile (`video_page`, `video_lookup`), sent again with it, its playlists and each of its\npieces, as a site's video server may serve its own pages' players only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page_url": {
+          "description": "From the browser (#607): the web page the download was started from, whole (its tab's\naddress; a link's opened in a tab of its own, the tab that opened it), where the Referer\nis often cut to the site's address by the page's referrer policy. Kept with the download:\nRefresh download address opens it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pair": {
           "default": false,
           "description": "The remote control (#157, `misterdownloadmanager-cli pair`): show a new pairing code;\nanswered with it, the page's addresses and a QR code to scan ([`api::PairAnswer`]).",
@@ -433,6 +705,14 @@
         "panel_hide_site": {
           "default": null,
           "description": "From that button's menu: never show it on this site (a host name) again.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "panel_show_site": {
+          "default": null,
+          "description": "From that button's \"Turn on\" (after \"Never on <site>\"): show it on this site again.",
           "type": [
             "string",
             "null"
@@ -455,7 +735,7 @@
         },
         "private": {
           "default": false,
-          "description": "From a private (incognito) window: the download is never written to the saved list.",
+          "description": "From a private (incognito) window: the download is not written to the saved list, unless\nthe app's Options → General → \"Keep private-window downloads in the list\" is on.",
           "type": "boolean"
         },
         "proxy": {
@@ -494,6 +774,28 @@
             "null"
           ]
         },
+        "recent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecentAsk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "From the browser's toolbar button (#1496, its native host asks): the newest downloads its\npopup lists, answered with an [`api::RecentAnswer`] whatever the automation API's switch,\nnever for a paired device."
+        },
+        "recent_act": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecentAct"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "That list's buttons: act on one download (open it, show it in its folder, copy its file,\nshare it, pause, resume…), answered with an [`api::RecentActAnswer`]."
+        },
         "referer": {
           "default": null,
           "description": "From the browser: request context to reuse.",
@@ -505,6 +807,14 @@
         "show": {
           "default": null,
           "description": "`/show <window>` (beyond IDM): the running app opens one of its windows by name, for\nscreenshots and scripted checks (tools/lab/docs-shots.ps1): `addurl`, `batch`, `find`,\n`scheduler`, `about`, `language`, `shortcuts`, `speedlimit`, `properties`, `delete`,\n`progress`, `existing-files`, `video-page`, `video-helpers`, `video-subs`,\n`torrent-settings`, `add-trackers`, `menu` (the first download's right-click menu),\n`options[:general|types|saveto|downloads|connection|proxy|logins|sounds|regional|panels]`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "show_download": {
+          "default": null,
+          "description": "That button's \"Show\", once a download was added: the main window comes up with the newest\ndownload of this address (the video's page as it was looked up, or its file) selected.",
           "type": [
             "string",
             "null"
@@ -554,6 +864,23 @@
             "null"
           ]
         },
+        "video_direct": {
+          "default": false,
+          "description": "With `video_page`, from that button over a video that plays a plain file (no stream, no\npage to read): `video_page` is that file, downloaded as any file at once, with no window.",
+          "type": "boolean"
+        },
+        "video_lookup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoLookup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "From the browser's quality menu over a video (the button's click): look this video up\nwith yt-dlp, off the window, and answer at once with a token to ask about it\n([`api::VideoLookupAnswer`], `pending`). The browser's request context (`referer`,\n`cookies`, `cookie_jar`, `user_agent`, `private`) goes with it and stays the look-up's."
+        },
         "video_page": {
           "default": null,
           "description": "From the browser's download button over a video: open the Download video window for this\npage (its address; an embedded player's own).",
@@ -562,9 +889,38 @@
             "null"
           ]
         },
+        "video_part_from": {
+          "description": "With `video_page`, from that button's \"Download a part from here...\" (#1662): the window\nopens with Part ticked, From this many seconds into the video (where its player was).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "video_pick": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoPick"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The quality menu: download the choice made there, with the look-up's own selector and\ncontext (`private` must be the look-up's); answered `started` or `queued`, or\n`use-window` when it can't be (the Download video window then does it)."
+        },
+        "video_poll": {
+          "default": null,
+          "description": "The quality menu: how is the look-up of this token going (`pending`, `ready` with the\nchoices, `failed`, `list`, `gone`)?",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "video_title": {
           "default": null,
-          "description": "The title of the page the button was clicked on: a video yt-dlp knows only by its address\nis named by it.",
+          "description": "The title of the page the button was clicked on (the tab's, for a player in a frame of\nit), without the site's name (`Film | Site` is `Film`: the extension's `withoutSiteName`):\na video yt-dlp knows only by its address is named by it.",
           "type": [
             "string",
             "null"
@@ -593,11 +949,226 @@
         "why"
       ],
       "type": "object"
+    },
+    "VideoChoice": {
+      "description": "One quality the browser's quality menu offers.",
+      "properties": {
+        "approx": {
+          "description": "`size` is an estimate (a stream's bitrate times its length, a conversion's), shown as\nabout (\"~532 MB\"); otherwise it is the bytes of exactly the streams this downloads (#801).",
+          "type": "boolean"
+        },
+        "audio": {
+          "default": false,
+          "description": "Only the sound (an audio file, a conversion to MP3, Opus or FLAC): the menu lists these\napart from the videos. False from an app older than the field.",
+          "type": "boolean"
+        },
+        "codec": {
+          "description": "The picture's codec as people name it: `AV1`, `VP9`, `H.264`, `H.265`… (#755). None\nfrom an app older than the field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compatible": {
+          "description": "The most compatible choice (#1439): an H.264 picture with AAC sound in an MP4, which\nevery video editor, TV and phone plays; the menu says so beside its height. False from\nan app older than the field.",
+          "type": "boolean"
+        },
+        "ext": {
+          "default": "",
+          "description": "The file's type (`mp4`, `mp3`).",
+          "type": "string"
+        },
+        "fps": {
+          "description": "Frames a second, rounded (an app older than #755 said it only above 31).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "height": {
+          "description": "The picture's height in pixels (the button's chip: 1080p, 4K); none for the sound, or a\nfile known only by its type.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kbps": {
+          "description": "The sound's bitrate in kbit/s, for the sound as the site has it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "label": {
+          "default": "",
+          "description": "What the menu shows (\"720p mp4\"), in MDM's language.",
+          "type": "string"
+        },
+        "original": {
+          "description": "The sound as the site sends it (not converted): the button's list says \"original\".",
+          "type": "boolean"
+        },
+        "range": {
+          "description": "The picture's dynamic range when worth saying: `HDR`, `Dolby Vision`, or `SDR` beside an\nHDR choice of the same height (#755).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "default": null,
+          "description": "Bytes, exact or estimated (`approx`); null when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VideoLookup": {
+      "description": "The video the browser's quality menu asks about ([`Command::video_lookup`]).",
+      "properties": {
+        "address": {
+          "default": "",
+          "description": "What yt-dlp looks up: the video's own file or its stream's manifest when the page plays\none, else the page.",
+          "type": "string"
+        },
+        "store_id": {
+          "default": null,
+          "description": "The browser's cookie store the page is in (Firefox's containers): a choice is only taken\nfrom the same one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "default": null,
+          "description": "The title of the page the button was clicked on, as [`Command::video_title`] has it: a\nvideo yt-dlp knows only by its address is named by it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VideoLookupAnswer": {
+      "description": "The browser's quality menu (`video_lookup`, `video_poll`, `video_pick`): where a look-up is,\nor what became of a choice. Answered whatever the automation API's switch (the browser's\nhost asks, not a program).",
+      "properties": {
+        "choices": {
+          "description": "`ready`: the qualities to choose from, labelled in MDM's language; `video_pick` takes a\nplace in this list.",
+          "items": {
+            "$ref": "#/$defs/VideoChoice"
+          },
+          "type": "array"
+        },
+        "message": {
+          "description": "`failed` with [`lookup::ERROR`]: why, in MDM's words and language.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoNotice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`ready` (and `failed` with [`lookup::NO_CHOICES`]): what the look-up lacked and how to\nmend it, shown with the choices (#852: YouTube's qualities need a JavaScript runtime).\nNone from an app older than the field."
+        },
+        "reason": {
+          "description": "`failed`: [`lookup::NO_YTDLP`], [`lookup::NO_CHOICES`] or [`lookup::ERROR`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "default": "",
+          "description": "One of [`lookup`]'s states.",
+          "type": "string"
+        },
+        "title": {
+          "description": "`ready`: the video's title, the file's name: the page's when yt-dlp knows the video only\nby its address, as the Download video window names it ([`crate::Command::video_title`]).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "description": "`pending` and `ready`: the look-up's token, to ask about it and to pick from it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VideoNotice": {
+      "description": "A word in the browser's quality menu on what the look-up lacked (#852), in MDM's language.",
+      "properties": {
+        "link": {
+          "default": "",
+          "description": "The link's words (\"How to install one\").",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "description": "What is wrong and what to do (\"YouTube needs a JavaScript runtime…\").",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "description": "The help page it opens, on MDM's website.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "VideoPick": {
+      "description": "A choice made in the browser's quality menu ([`Command::video_pick`]).",
+      "properties": {
+        "choice": {
+          "default": 0,
+          "description": "The choice's place in the look-up's `choices`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "store_id": {
+          "default": null,
+          "description": "The cookie store the choice was made in: the look-up's, or it isn't taken.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "default": "",
+          "description": "The look-up's token.",
+          "type": "string"
+        }
+      },
+      "type": "object"
     }
   },
   "$id": "https://misterdownloadmanager.com/automation-api.schema.json",
   "$ref": "#/$defs/Request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One JSON line to the port in ipc.json (on 127.0.0.1), one line back. A request is `Request`. A command (an address to add, start_queue) is answered `ok`; a question is answered with the JSON object for it (`ListAnswer`, `ActAnswer`, `ApiAnswer`) or an `ErrorAnswer`. A wrong token is answered `denied`, an app that doesn't answer within 2 seconds `timeout`. Guide: https://misterdownloadmanager.com/help/command-line.html#the-automation-api",
+  "description": "One JSON line to the port in ipc.json (on 127.0.0.1), one line back. A request is `Request`. A command (an address to add, start_queue) is answered `ok`; a question is answered with the JSON object for it (`ListAnswer`, `ActAnswer`, `ApiAnswer`) or an `ErrorAnswer`. A wrong token is answered `denied`, an app that doesn't answer within 2 seconds `timeout`. The browser's quality menu (`video_lookup`, `video_poll`, `video_pick`, sent by its native host) is answered with a `VideoLookupAnswer`; the browser popup's list (`recent`, `recent_act`, sent by its native host too, #1496) with a `RecentAnswer` or a `RecentActAnswer`. Guide: https://misterdownloadmanager.com/help/command-line.html#the-automation-api",
   "title": "Mister Download Manager automation API"
 }

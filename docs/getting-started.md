@@ -2,8 +2,9 @@
 
 [← Back to docs index](README.md)
 
-MDM runs on 64-bit Windows 10 and Windows 11, and on 64-bit Linux: see [On Linux](#on-linux).
-Builds for macOS are new and still experimental: see [On a Mac](#on-a-mac).
+MDM runs on Windows 10 and Windows 11 (x64, ARM64 and 32-bit), and on 64-bit Linux (x86-64 and
+ARM64): see [On Linux](#on-linux). Builds for macOS are new and still experimental: see
+[On a Mac](#on-a-mac).
 
 ## Choose a download
 
@@ -15,12 +16,36 @@ Every version is on the [Releases](https://github.com/anefzaoui/misterdownloadma
 | `MisterDownloadManager-<version>-portable.zip` | A portable copy. The download list and settings stay in a `data` folder next to the program, and nothing is written to the registry. Browser integration needs the installer. See [Portable mode](portable.md). |
 | `MisterDownloadManager-<version>-x64.zip` | The same programs without an installer. It keeps its data in `%APPDATA%\misterdownloadmanager`, like an installed copy. |
 
+These three are for 64-bit Windows on an Intel or AMD processor (x64), the usual PC. From the
+version after 0.5.2, each comes for two more kinds of PC too, with the processor in its name:
+
+| Files | For |
+|---|---|
+| `...-setup-arm64.exe`, `...-portable-arm64.zip`, `...-arm64.zip` | **Windows on ARM** (PCs with a Snapdragon or another ARM processor). On Windows 11 the x64 files run there too, translated by Windows, more slowly. The ARM64 setup installed over the x64 one replaces it; your list and settings stay, as they are kept in your profile, not with the program. |
+| `...-setup-x86.exe`, `...-portable-x86.zip`, `...-x86.zip` | **32-bit Windows 10.** Not sure which you have? **Settings → System → About → System type** says it. MDM can't download ffmpeg for you there (none is built for 32-bit Windows that MDM can check): to get the best video qualities, choose an ffmpeg of your own in **Helpers...** ([Video](video.md#yt-dlp-and-ffmpeg)). |
+
+**Help → Check for updates** updates each copy to the files for its own processor.
+
+### With WinGet
+
+MDM is also in [WinGet](https://learn.microsoft.com/windows/package-manager/winget/), Windows' package manager. In a terminal, the first line installs MDM and the second updates it to the latest version:
+
+```
+winget install AhmedNefzaoui.MisterDownloadManager
+winget upgrade AhmedNefzaoui.MisterDownloadManager
+```
+
+WinGet downloads the setup and installs MDM without the setup's questions.
+
 ### On Linux
 
 MDM runs on 64-bit Linux with a desktop session. It is tested on Ubuntu 24.04, Debian 12 and
 Fedora, with GNOME, KDE Plasma, Xfce and Cinnamon, on X11 and in Wayland sessions. Pick one
 of these files (up to version 0.2.4, their names end in `-experimental`, as in
-`...-linux-x86_64-experimental.deb`):
+`...-linux-x86_64-experimental.deb`). From the version after 0.5.2, each also comes for 64-bit
+ARM computers, with `arm64` in place of `x86_64` (`...-linux-arm64.deb`); they are built and
+tested on GitHub's ARM machines. On ARM, MDM doesn't download gallery-dl itself (its author
+builds none for it): install it with your system's packages or pip.
 
 | File | What it is |
 |---|---|
@@ -37,12 +62,12 @@ Browser integration is set up by MDM itself at each start (the browsers installe
 ![The window that offers the browser extension on Linux: Google Chrome and Mozilla Firefox, each with Add the extension](images/browser-offer-linux.webp)
 *MDM finds the browsers installed and offers each one its extension.*
 
-In a Wayland session the windows go through XWayland (below). Not there yet on Linux: screen
+In a Wayland session the windows go through XWayland or Wayland (below). Not there yet on Linux: screen
 readers (Orca) don't read MDM's windows; browsers installed as a Flatpak can't reach MDM (Firefox
 from Flathub may, through the desktop as the Snap does, but that isn't checked yet); and **View →
 Draw with → Vulkan** is a choice, OpenGL stays the default.
 
-In a Wayland session (GNOME, KDE Plasma and others), MDM's windows run through XWayland when it is there: Wayland doesn't let a program place its own windows, so MDM's menus and drop-down lists would open in the middle of the screen. To run on Wayland itself anyway, start it with `MDM_WAYLAND=1 misterdownloadmanager`. If the system lacks a library X11 windows need (such as libxkbcommon-x11, which the .deb and .rpm bring but the AppImage and the tar.gz can't), MDM opens on Wayland instead; with no window system it can use, it names what's missing and the command that installs it.
+In a Wayland session, MDM chooses its windows' system as it starts, the same way however it was started (its menu entry, the browser's helper, the session's autostart). Its windows run through XWayland where X11 programs look right: only X11 lets MDM open its menus and drop-down lists right under what you clicked (on Wayland they open where the compositor puts new windows, often the middle of the screen) and hide its window in the notification area. That is GNOME and KDE Plasma, which tell X11 programs the screen's scale, and any desktop whose screens aren't scaled. On a scaled screen where nothing tells X11 programs the scale (Hyprland, labwc, sway and other wlroots compositors), the compositor would scale MDM's windows up, blurry, so MDM uses Wayland's own windows there. **View → Window system** picks **X11 (XWayland)** or **Wayland** instead, from the next start, for every way MDM starts (**Automatic** goes back to MDM's choice); `MDM_WAYLAND=1` or `MDM_WAYLAND=0` decides for one start. If the system lacks a library X11 windows need (such as libxkbcommon-x11, which the .deb and .rpm bring but the AppImage and the tar.gz can't), MDM opens on Wayland instead; with no window system it can use, it names what's missing and the command that installs it.
 
 The windows are the ones described in this help, with the desktop's fonts, file icons and title
 bars:
@@ -75,9 +100,9 @@ And on the other desktops it was checked on:
 
 `sudo apt remove misterdownloadmanager` (or `sudo dnf remove misterdownloadmanager`) removes the
 programs, and the small files that tell your browsers where MDM's helper is: the .deb and .rpm
-install those for everyone (in `/etc` and `/usr/lib`), for Chrome, Chromium, Edge, Brave, Vivaldi
-and Firefox (the Snap too), so MDM doesn't write them in your home folder. For the AppImage or the
-tar.gz, delete the file or the folder.
+install those for everyone (in `/etc` and `/usr/lib`), for Chrome, Chromium, Edge, Brave, Vivaldi,
+Helium and Firefox (the Snap too), so MDM doesn't write them in your home folder. For the AppImage
+or the tar.gz, delete the file or the folder.
 
 What MDM keeps in your home folder stays, as with any package: your list and settings
 (`~/.local/share/misterdownloadmanager`), the AppImage's and the tar.gz's browser files, and
@@ -122,7 +147,7 @@ Browser integration is set up by MDM itself at each start (the browsers installe
    - **Create a desktop shortcut** (off unless you tick it)
 5. Click **Install**, then **Finish** to start MDM.
 
-If MDM is already running, the setup asks it to save and close first. To update, use **Help → Check for updates → Update now**, or run the setup of the new version; your list and settings stay.
+If MDM is already running, the setup asks it to save and close first. To update, use **Help → Check for updates → Update now**, or run the setup of the new version (or update with [WinGet](#with-winget)); your list and settings stay.
 
 Browser integration needs one more step in each browser: adding the extension. In Firefox, click **Add to Firefox** on [its page on addons.mozilla.org](https://addons.mozilla.org/firefox/addon/mister-download-manager/); in Chrome, Edge, Brave, Opera and Vivaldi, **Add to Chrome** on [its page in the Chrome Web Store](https://chromewebstore.google.com/detail/mister-download-manager/ejoleppdfgjdndddcjoehopknmlglojp). [Browser integration](browser-integration.md) shows how.
 
@@ -168,7 +193,7 @@ From top to bottom:
   - **Tasks** — add downloads, torrents, magnet links, batch downloads and videos from a page; **Torrent settings**; **Link grabber**; **RSS feeds**; show the drop target; import and export the list; exit.
   - **File** — the selected download: **Stop Download**, **Remove**, **Download Now**, **Redownload**.
   - **Downloads** — **Pause All**, **Stop All**, **Delete All Completed**, **Find**, the **Scheduler**, queues, the **Speed Limiter** and **Options**.
-  - **View** — show or hide the categories, sort the list (**Arrange files**), **Dark Mode support**, **Always dark**, **Theme**, **Interface size** (every window larger, 100 % to 200 %; **Ctrl +**, **Ctrl −** and **Ctrl 0** too), **Draw with** (OpenGL, or Direct3D on Windows, Vulkan on Linux, Metal on macOS) and **Language**.
+  - **View** — show or hide the categories, sort the list (**Arrange files**), **Dark Mode support**, **Always dark**, **Theme**, **Interface size** (every window larger, 100 % to 200 %; **Ctrl +**, **Ctrl −** and **Ctrl 0** too), **Text** (Windows: smooth or classic letters), **Draw with** (OpenGL, or Direct3D on Windows, Vulkan on Linux, Metal on macOS) and **Language**.
   - **Help** — help pages and tutorials (on the website, in your language when it has it), **Keyboard shortcuts**, **Report a problem**, **Check for updates**, **About**, **Tell a friend** and **Support MDM** (its creator's GitHub Sponsors page: optional, nothing in MDM changes).
 - **Toolbar.** **Add URL**, **Add Torrent**, **Resume**, **Stop**, **Stop All**, **Delete**, **Delete Completed**, **Options**, **Scheduler**, **Start Queue**, **Stop Queue**. The small arrow next to **Add Torrent**, **Start Queue** and **Stop Queue** opens more choices.
 - **Categories** (left). Choose what the list shows: **All Downloads**, **Unfinished**, **Finished** and **Queues**, each with its categories. Drag the gap between the pane and the list to make it wider.
@@ -210,8 +235,11 @@ MDM follows your system: when Windows (or your desktop's light/dark preference o
 - **Aqua**: Mac OS X's look: gel buttons round at the ends (the default one blue), glossy check
   boxes, a blue focus ring, a blue gel progress bar, a grey title bar with small round buttons
   (on Windows), and icons drawn for MDM in that manner.
+- **Emerald**: a white canvas with one near-black ink and a ladder of
+  neutral greys for structure, emerald fills that always carry near-black text rather than white,
+  6-point corners on every control, and Metro's one-colour icons.
 
-![View → Theme open: Classic, Native, High contrast, Metro, Adwaita, Breeze, Luna, Aero and Aqua, and Open themes folder](images/help/view-theme.webp)
+![View → Theme open: Classic, Native, High contrast, Metro, Adwaita, Breeze, Luna, Aero, Aqua and Emerald, and Open themes folder](images/help/view-theme.webp)
 *View → Theme switches at once, keeping the layout.*
 
 <!-- pictures -->
@@ -234,16 +262,19 @@ used, and how to make and share one.
 
 ## The tray icon
 
-Closing the main window doesn't quit MDM. It hides in the notification area, and downloads, queues and schedules carry on. To make closing quit (a portable copy's folder can then be deleted), untick **Options → General → Keep running when closing the window**. If there is no icon for MDM at all — not in the notification area, nor behind the ^ hidden icons — the window minimizes to the taskbar instead, so downloads continue and there is a way back. An icon behind ^ can be clicked to bring the window back, and starting MDM again always does.
+Closing the main window doesn't quit MDM. It hides in the notification area, and downloads, queues and schedules carry on. To make closing quit (a portable copy's folder can then be deleted), untick **Options → General → Keep running when closing the window**. If there is no icon for MDM at all — not in the notification area, nor behind the ^ hidden icons — the window minimizes to the taskbar instead, so downloads continue and there is a way back. An icon behind ^ can be clicked to bring the window back, and starting MDM again always does. On macOS the window closes into the Dock, as Mac apps' windows do: click MDM's icon in the Dock (or in the menu bar) to bring it back, and quit with **Cmd+Q** or **Mister Download Manager → Quit**.
 
 On Linux this needs a tray, which most desktops have (KDE Plasma, Xfce, Cinnamon, Ubuntu's GNOME or GNOME with the AppIndicator extension, waybar's tray). On a desktop without one (some tiling window managers), closing the window quits MDM, since there would be nowhere to bring it back from.
 
 ![MDM's icon in the top bar of Ubuntu's GNOME, its menu open: Open Mister Download Manager, Add new download, Add batch download, Downloads in progress, Speed Limiter, Scheduler, the main queue, Options and Exit](images/tray-linux.webp)
 *The tray icon's menu on Ubuntu's GNOME.*
 
-- Click the tray icon to bring the window back.
+- Click the tray icon to see what is downloading: a small panel over the icon lists each running download with its progress bar, how much has come of how much, its speed and the time left, and the progress window's **Pause** (then **Resume**; **Stop and save** for a live stream being recorded) and **Cancel** beside it. **Open Mister Download Manager** at its bottom brings the window back. Its **×**, **Esc**, a click elsewhere or another click on the icon closes it.
+- Double-click the tray icon to bring the window back straight away (Windows).
 - Right-click it for **Add new download**, **Add batch download**, **Downloads in progress**, **Speed Limiter**, **Scheduler**, the main download queue, **Options** and **Exit**.
 - **Downloads in progress** lists the running downloads. Choose one to see its progress window.
+- **Options → General → Show downloads when the notification area icon is clicked** is ticked in a new copy of MDM. Untick it and a click on the icon brings the window back (or hides it there while it is in front), as it did before the panel. An MDM that was set up before the panel keeps that click: tick it to have the panel.
+- On Linux the panel depends on the desktop's tray. KDE Plasma and Xfce send MDM the click, so the panel opens beside the icon. GNOME's AppIndicator extension may open the icon's menu on a left click instead, or send no place for the click: the panel then opens at the top right of the screen, under GNOME's top bar. In a native Wayland session the compositor decides where the panel goes and may not give it the focus, so a click elsewhere doesn't close it there: use its **×** or click the icon again. If the panel doesn't suit your desktop, untick the option above.
 
 Minimize hides the main window there too, while **Minimize to the notification area** is on in **Options → General**. It is on by default; where the tray has no icon, Minimize sends the window to the taskbar instead.
 

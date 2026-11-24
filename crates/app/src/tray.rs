@@ -1,10 +1,22 @@
 //! The notification-area icon (IDM: "IDM menu pops up when you right click on IDM icon"
-//! [IDM-doc]). Left click brings the window back; right click shows the menu. The menu's
+//! [IDM-doc]). Left click shows the downloads panel (traypanel.rs, #1365), or, with Options →
+//! General's "Show downloads when the notification area icon is clicked" unticked, shows the
+//! window again or hides it there while it shows; a double click (Windows) opens the window;
+//! right click shows the menu. The menu's
 //! contents are ours ([unknown] IDM's exact items, lab). Windows, macOS (menu bar) and Linux
 //! (StatusNotifierItem over D-Bus: KDE, GNOME with its AppIndicator extension).
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
+
+mod beside;
+mod picture;
+mod watch;
+
+#[cfg(windows)]
+pub(crate) use picture::small_icon_px;
+
+pub use watch::Icon;
 
 use tray_icon::menu::{
     CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -15,8 +27,17 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayCmd {
     Show,
+    /// Left click on the icon, where it was (screen pixels; None where the tray doesn't say,
+    /// [`click_at`]): the downloads panel there (#1365), or with Options' "Show downloads when the
+    /// notification area icon is clicked" unticked the window back when hidden or behind other
+    /// windows, hidden there when frontmost.
+    Click(Option<(i32, i32)>),
+    /// Left double click on the icon (Windows only: the other trays send none): the window.
+    DoubleClick,
     AddUrl,
     Batch,
+    /// Add batch download from clipboard (#709).
+    BatchClipboard,
     LimiterOn,
     LimiterOff,
     Scheduler,
@@ -30,34 +51,12 @@ pub enum TrayCmd {
 
 /// Whether a tray shows MDM's icon at all, so hiding a window there can be undone. Windows and
 /// macOS (the menu bar) always have one; on Linux only when a StatusNotifierItem host runs (#59),
-/// asked each time: it may come and go.
+/// asked each time: it may come and go. (Linux's icon itself is made beside the window: `Setup`.)
 pub fn available() -> bool {
     #[cfg(target_os = "linux")]
     return crate::unix::tray_host();
     #[cfg(not(target_os = "linux"))]
     true
-}
-
-/// What the shell says of MDM's icon, asked by [`Tray::visible_now`] (Windows and macOS).
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShellIcon {
-    /// It says where the icon is (Windows: Shell_NotifyIconGetRect; macOS: the menu bar item's
-    /// frame).
-    pub placed: bool,
-    /// It holds the icon (Windows: `win32::tray_icon_held`), wherever it shows it.
-    pub held: bool,
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-impl ShellIcon {
-    /// Whether the icon can bring a hidden window back. One the shell holds is reachable even
-    /// where the shell gives no place for it: the hidden icons behind ^, where Windows puts a
-    /// new icon (#545, #534, #527: MDM took a missing place for a missing icon and left the
-    /// window in the taskbar).
-    pub fn reachable(self) -> bool {
-        self.placed || self.held
-    }
 }
 
 /// What closing the main window does.
@@ -71,15 +70,38 @@ pub enum OnClose {
     Quit,
 }
 
-/// What closing the main window does: `keep_running` is Options' "Keep running when closing the
-/// window", `tray` whether a tray object exists, `shown` whether its icon is reachable
-/// ([`ShellIcon::reachable`]; Linux: a tray host runs), `taskbar` whether a window can wait in
-/// the taskbar or the Dock instead (not Linux: #59, a window there that merely minimized could
-/// never be closed). Never a hidden window with no icon to bring it back.
-pub fn on_close(keep_running: bool, tray: bool, shown: bool, taskbar: bool) -> OnClose {
-    if !(keep_running && tray) {
+/// What closing the main window does: `quitting` whether MDM was asked to quit (File → Exit, the
+/// tray's Exit, `/exit`, Update now, a queue's or a download's "Exit when done": `App::quit`),
+/// which quits whatever the rest says; `keep_running` is Options' "Keep running when closing the
+/// window", `tray` whether a tray object exists, `icon` what the shell last said of its icon
+/// ([`Tray::icon`]; Linux: there when a tray host runs), `taskbar` whether a window can wait in the
+/// taskbar or the Dock instead (not Linux: #59, a window there that merely minimized could never
+/// be closed), `dock` whether a click on the app's icon in the Dock brings a hidden window back
+/// (macOS, `unix::open_events::dock_reopens`).
+///
+/// Never a hidden window with no icon to bring it back: the taskbar (or quitting) only when the
+/// shell said the icon is gone. No answer, or an old one, hides the window as an icon that is
+/// there does (#750, #718, #754: a shell that couldn't confirm the icon left the window in the
+/// taskbar with the icon right there); such a window still comes back from the icon once the
+/// shell answers, and a second start of MDM always brings it back. On macOS the Dock is that way
+/// back (#1125): MDM's icon stays there while it runs, and a click on it shows the window, so
+/// closing hides the window as Mac apps do, whatever the menu bar shows (an icon behind the
+/// notch, or turned off in System Settings, is no way back).
+pub fn on_close(
+    quitting: bool,
+    keep_running: bool,
+    tray: bool,
+    icon: Icon,
+    taskbar: bool,
+    dock: bool,
+) -> OnClose {
+    if quitting || !keep_running {
         OnClose::Quit
-    } else if shown {
+    } else if dock {
+        OnClose::Hide
+    } else if !tray {
+        OnClose::Quit
+    } else if icon != Icon::Gone {
         OnClose::Hide
     } else if taskbar {
         OnClose::Minimize
@@ -88,36 +110,69 @@ pub fn on_close(keep_running: bool, tray: bool, shown: bool, taskbar: bool) -> O
     }
 }
 
+/// A left click this soon after a double click is the double click's last release: the
+/// system's double-click time (Windows; the other trays send no double click).
+fn double_click() -> std::time::Duration {
+    #[cfg(windows)]
+    return crate::win32::double_click_time();
+    #[cfg(not(windows))]
+    std::time::Duration::from_millis(500)
+}
+
+/// A click's place as the tray gave it (screen pixels), or None where it gave none: a
+/// StatusNotifierItem host may send 0, 0 for "unknown" (GNOME's AppIndicator extension can),
+/// which is no place on any screen's taskbar.
+fn click_at(x: f64, y: f64) -> Option<(i32, i32)> {
+    let (x, y) = (x.round() as i32, y.round() as i32);
+    (x != 0 || y != 0).then_some((x, y))
+}
+
 /// The longest download name in the tray menu, in characters (the rest ends in "…").
 const MENU_NAME_MAX: usize = 48;
 
+/// The tray icon as the window holds it: the icon and its menu (Windows, macOS: made on the
+/// window's thread; Linux: on a thread of its own, see `Setup`), and the commands they send.
 pub struct Tray {
+    native: Held,
+    rx: Receiver<TrayCmd>,
+    /// The tip shown and when, so the shell is told at most once a second.
+    tip: std::cell::RefCell<(String, Option<std::time::Instant>)>,
+    /// What Start and Stop main download queue were last set to (told only when it changes).
+    queue_running: std::cell::Cell<Option<bool>>,
+    /// The downloads "Downloads in progress" was last given (rebuilt only when they change).
+    shown_downloads: std::cell::RefCell<Vec<(u64, String)>>,
+}
+
+/// The icon and its menu, as the system's tray library makes them.
+struct Native {
     limiter_on: CheckMenuItem,
     limiter_off: CheckMenuItem,
     /// Start and Stop main download queue: one of them enabled, as the queue runs.
     start_queue: MenuItem,
     stop_queue: MenuItem,
-    queue_running: std::cell::Cell<Option<bool>>,
+    /// The icon itself, kept for as long as the tray (Windows asks and tells the shell about it
+    /// from the watcher's thread, through its hidden window).
+    #[cfg_attr(windows, allow(dead_code))]
     tray: TrayIcon,
-    /// The tip shown and when, so the shell is told at most once a second.
-    tip: std::cell::RefCell<(String, Option<std::time::Instant>)>,
-    rx: Receiver<TrayCmd>,
     /// "Downloads in progress": one entry per running download, rebuilt when they change.
     downloads: Submenu,
-    shown_downloads: std::cell::RefCell<Vec<(u64, String)>>,
     download_ids: Arc<Mutex<Vec<(MenuId, u64)>>>,
     /// Every entry with its English text, to translate again when the language changes.
     labels: Vec<(Entry, &'static str)>,
-    /// What [`Tray::visible`] last saw and when: the minimize path asks every frame, and the
-    /// shell shouldn't be asked that often (a second of staleness is enough).
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    visible_checked: std::cell::Cell<Option<(bool, std::time::Instant)>>,
-    /// The shell's last answer, logged when it changes.
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    answer: std::cell::Cell<Option<ShellIcon>>,
-    /// The icon's id with the shell, once found (`win32::tray_icon_held`).
+    /// What [`Tray::icon`] last saw and when: the minimize path asks every frame, and the menu
+    /// bar shouldn't be asked that often (a second of staleness is enough).
+    #[cfg(target_os = "macos")]
+    visible_checked: std::cell::Cell<Option<(Icon, std::time::Instant)>>,
+    /// The menu bar's last answer, logged when it changes.
+    #[cfg(target_os = "macos")]
+    answer: std::cell::Cell<Option<bool>>,
+    /// The thread that asks the shell about the icon and sets its tip (#747: never the window's).
     #[cfg(windows)]
-    icon_id: std::cell::Cell<Option<u32>>,
+    watch: watch::Watch,
+    /// The last answer the window took from it, for a frame where the watcher is busy writing
+    /// the next.
+    #[cfg(windows)]
+    seen: std::cell::Cell<Option<watch::Seen>>,
 }
 
 /// A menu entry whose text is translated.
@@ -128,69 +183,280 @@ enum Entry {
 }
 
 impl Tray {
-    /// What the shell says of the icon now.
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    fn shell_icon(&self) -> ShellIcon {
-        // MDM_TEST_TRAY_RECT=0: the shell gives no place for the icon, as the reporters' did for
-        // one behind ^ (the close test, with a real icon the shell holds).
-        let placed = self.tray.rect().is_some()
-            && std::env::var_os("MDM_TEST_TRAY_RECT").is_none_or(|v| v != "0");
-        #[cfg(windows)]
-        let held = {
-            let id = crate::win32::tray_icon_held(self.tray.window_handle(), self.icon_id.get());
-            if id.is_some() {
-                self.icon_id.set(id);
-            }
-            id.is_some()
-        };
-        // macOS has no other question: the menu bar item's frame is the answer.
-        #[cfg(not(windows))]
-        let held = false;
-        ShellIcon { placed, held }
-    }
-
-    /// Whether the shell really has the icon, to click. `tray-icon` ignores a failed
-    /// `Shell_NotifyIcon(NIM_ADD)` (it waits for the taskbar to be recreated), so `Tray::new`
-    /// returning `Some` doesn't mean the user can see or click the icon: the shell is asked
-    /// ([`ShellIcon`]). Linux has no such query: its [`available`] stands for it.
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    pub fn visible(&self) -> bool {
-        // Off-screen tests can't make the shell answer reliably: the variable says what to
-        // answer (the startup tray test uses it with MDM_TEST_TRAY).
-        if let Some(v) = std::env::var_os("MDM_TEST_TRAY_VISIBLE") {
-            return v == "1";
-        }
-        if let Some((shown, checked)) = self.visible_checked.get()
-            && checked.elapsed() < std::time::Duration::from_secs(1)
-        {
-            return shown;
-        }
-        self.visible_now()
-    }
-
-    /// [`visible`] without the one-second cache: closing asks once and must not use an answer
-    /// from before the icon went away.
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    pub fn visible_now(&self) -> bool {
-        if let Some(v) = std::env::var_os("MDM_TEST_TRAY_VISIBLE") {
-            return v == "1";
-        }
-        let icon = self.shell_icon();
-        if self.answer.replace(Some(icon)) != Some(icon) {
-            tracing::info!(
-                "tray icon: placed {}, held by the shell {}",
-                icon.placed,
-                icon.held
-            );
-        }
-        let shown = icon.reachable();
-        self.visible_checked
-            .set(Some((shown, std::time::Instant::now())));
-        shown
-    }
-
     /// The icon and its menu; events wake `ctx`. None if the shell refuses the icon (logged).
+    /// Linux makes it beside the window instead: [`Setup`].
+    #[cfg(not(target_os = "linux"))]
     pub fn new(ctx: &egui::Context, limiter: bool) -> Option<Tray> {
+        let (tx, rx) = channel();
+        Some(Tray::with(Native::new(ctx, limiter, tx)?, rx))
+    }
+
+    fn with(native: Held, rx: Receiver<TrayCmd>) -> Tray {
+        Tray {
+            native,
+            rx,
+            tip: Default::default(),
+            queue_running: std::cell::Cell::new(None),
+            shown_downloads: Default::default(),
+        }
+    }
+
+    /// Run `job` on the icon: here, or on its own thread on Linux (never waiting for it there).
+    fn at(&self, job: impl FnOnce(&Native) + Send + 'static) {
+        #[cfg(not(target_os = "linux"))]
+        job(&self.native);
+        #[cfg(target_os = "linux")]
+        self.native.run(job);
+    }
+
+    /// What the shell says of the icon: [`Native::icon`].
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn icon(&self) -> Icon {
+        self.native.icon()
+    }
+
+    /// [`Native::icon_now`].
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn icon_now(&self) -> Icon {
+        self.native.icon_now()
+    }
+
+    /// [`Native::rescue`].
+    #[cfg(windows)]
+    pub fn rescue(&self) -> bool {
+        self.native.rescue()
+    }
+
+    /// The commands since the last call.
+    pub fn poll(&self) -> Vec<TrayCmd> {
+        self.rx.try_iter().collect()
+    }
+
+    /// Translate the menu again (the interface language changed).
+    pub fn relabel(&self) {
+        self.at(Native::relabel);
+    }
+
+    /// Keep Start / Stop main download queue in step with the queue (the menu is only told
+    /// when it changes).
+    pub fn set_queue(&self, running: bool) {
+        if self.queue_running.replace(Some(running)) != Some(running) {
+            self.at(move |n| n.set_queue(running));
+        }
+    }
+
+    /// The icon's tip: the app's name, and while downloads run how many and how fast.
+    pub fn set_tooltip(&self, tip: &str) {
+        // The shell draws it: without isolates (#919).
+        let tip = crate::i18n::os_text(tip);
+        let tip = tip.as_str();
+        let mut last = self.tip.borrow_mut();
+        let due = last
+            .1
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+        if last.0 != tip && due {
+            // Windows: the watcher's thread sets it, as setting it waits for Explorer (#747).
+            #[cfg(windows)]
+            if !self.native.tip(tip) {
+                return;
+            }
+            #[cfg(not(windows))]
+            {
+                let tip = tip.to_owned();
+                self.at(move |n| {
+                    n.tip(&tip);
+                });
+            }
+            *last = (tip.to_owned(), Some(std::time::Instant::now()));
+        }
+    }
+
+    /// "Downloads in progress": the running downloads (id, name), the menu rebuilt only when they
+    /// change; greyed when none runs.
+    pub fn set_downloads(&self, running: &[(u64, String)]) {
+        if *self.shown_downloads.borrow() == running {
+            return;
+        }
+        let running = running.to_vec();
+        *self.shown_downloads.borrow_mut() = running.clone();
+        self.at(move |n| n.set_downloads(&running));
+    }
+
+    /// Keep the Speed Limiter checks in step with the app.
+    pub fn set_limiter(&self, on: bool) {
+        self.at(move |n| n.set_limiter(on));
+    }
+}
+
+/// The icon as [`Tray`] holds it: itself (Windows, macOS), or the thread that keeps it (Linux).
+#[cfg(not(target_os = "linux"))]
+type Held = Native;
+#[cfg(target_os = "linux")]
+type Held = beside::Beside<Native>;
+
+/// Linux's tray icon on its way (#828): made on a thread of its own, as its library waits for the
+/// session bus, for ever where none answers. Until it is made the window behaves as with no tray
+/// host; [`Setup::poll`] hands it over once it is, however late.
+#[cfg(target_os = "linux")]
+pub struct Setup {
+    native: Option<beside::Beside<Native>>,
+    rx: Option<Receiver<TrayCmd>>,
+    started: std::time::Instant,
+    /// The interface language the menu was made in, to translate it again if it changed since.
+    lang: &'static str,
+    /// The phase last seen, to log each change once.
+    told: beside::Phase,
+}
+
+/// What [`Setup::poll`] found.
+#[cfg(target_os = "linux")]
+pub enum Came {
+    /// Not yet: the window behaves as with no tray host.
+    Waiting,
+    /// The icon, made.
+    Up(Tray),
+    /// No icon this run (logged).
+    Failed,
+}
+
+#[cfg(target_os = "linux")]
+impl Setup {
+    /// Start making the icon and its menu beside the window; its events, and its coming, wake
+    /// `ctx`.
+    pub fn start(ctx: &egui::Context, limiter: bool) -> Setup {
+        let (tx, rx) = channel();
+        let made = ctx.clone();
+        let wake = ctx.clone();
+        let native = beside::Beside::start(
+            "tray icon",
+            move || Native::new(&made, limiter, tx),
+            move || wake.request_repaint(),
+        );
+        // To log a long wait once it is long, even with nothing else to draw.
+        ctx.request_repaint_after(beside::WAIT);
+        Setup {
+            native: Some(native),
+            rx: Some(rx),
+            started: std::time::Instant::now(),
+            lang: crate::i18n::code(),
+            told: beside::Phase::Waiting,
+        }
+    }
+
+    /// Whether the icon is made. Never waits for it.
+    pub fn poll(&mut self) -> Came {
+        let Some(native) = &self.native else {
+            return Came::Failed;
+        };
+        let waited = self.started.elapsed();
+        let phase = beside::phase(native.made(), waited);
+        let was = std::mem::replace(&mut self.told, phase);
+        match phase {
+            beside::Phase::Waiting => Came::Waiting,
+            beside::Phase::GaveUp => {
+                if was != phase {
+                    tracing::warn!(
+                        "tray icon: the session bus hasn't answered in {} s: carrying on without the icon (closing quits) until it does",
+                        beside::WAIT.as_secs()
+                    );
+                }
+                Came::Waiting
+            }
+            beside::Phase::Failed => {
+                self.native = None;
+                Came::Failed
+            }
+            beside::Phase::Up => {
+                let (Some(native), Some(rx)) = (self.native.take(), self.rx.take()) else {
+                    return Came::Failed;
+                };
+                if was == beside::Phase::GaveUp {
+                    tracing::info!(
+                        "tray icon: the session bus answered late, {} ms on",
+                        waited.as_millis()
+                    );
+                } else {
+                    tracing::info!("tray icon: made in {} ms", waited.as_millis());
+                }
+                let tray = Tray::with(native, rx);
+                if crate::i18n::code() != self.lang {
+                    tray.relabel();
+                }
+                Came::Up(tray)
+            }
+        }
+    }
+}
+
+impl Native {
+    /// What the shell says of the icon, as the window may act on it: closing, Minimize to the
+    /// notification area and the start with the session ask it every frame. Windows: the last
+    /// answer of the watcher's thread, never waiting for the shell; macOS: the menu bar item's
+    /// frame (AppKit's, asked on the window's thread), a second old at most. Linux has no such
+    /// question: its [`available`] stands for it.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn icon(&self) -> Icon {
+        if let Some(v) = test_visible() {
+            return v;
+        }
+        #[cfg(windows)]
+        return watch::icon(self.seen(), std::time::Instant::now());
+        #[cfg(target_os = "macos")]
+        {
+            if let Some((icon, checked)) = self.visible_checked.get()
+                && checked.elapsed() < std::time::Duration::from_secs(1)
+            {
+                return icon;
+            }
+            self.icon_now()
+        }
+    }
+
+    /// [`Tray::icon`], for closing: on macOS without the one-second cache (an icon gone since must
+    /// not hide the window); on Windows the same last answer, whose age it weighs.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn icon_now(&self) -> Icon {
+        if let Some(v) = test_visible() {
+            return v;
+        }
+        #[cfg(windows)]
+        return self.icon();
+        #[cfg(target_os = "macos")]
+        {
+            // MDM_TEST_TRAY_RECT=0: the menu bar gives the item no place.
+            let placed = self.tray.rect().is_some()
+                && std::env::var_os("MDM_TEST_TRAY_RECT").is_none_or(|v| v != "0");
+            if self.answer.replace(Some(placed)) != Some(placed) {
+                tracing::info!("tray icon: placed {placed}");
+            }
+            let icon = if placed { Icon::There } else { Icon::Gone };
+            self.visible_checked
+                .set(Some((icon, std::time::Instant::now())));
+            icon
+        }
+    }
+
+    /// Whether a window hidden in the notification area should come back to the taskbar: the
+    /// shell, running and answering, has said for some seconds that it has no icon of MDM's
+    /// (`watch::rescue`). Never on no answer. Windows only: macOS leaves a window hidden in the
+    /// menu bar as it was.
+    #[cfg(windows)]
+    pub fn rescue(&self) -> bool {
+        test_visible().is_none() && watch::rescue(self.seen(), std::time::Instant::now())
+    }
+
+    /// The watcher's last answer, or the one the window took before while it is busy writing.
+    #[cfg(windows)]
+    fn seen(&self) -> Option<watch::Seen> {
+        if let Some(seen) = self.watch.latest() {
+            self.seen.set(Some(seen));
+        }
+        self.seen.get()
+    }
+
+    /// The icon and its menu; events go to `tx` and wake `ctx`. None if the shell refuses the icon
+    /// (logged).
+    fn new(ctx: &egui::Context, limiter: bool, tx: Sender<TrayCmd>) -> Option<Native> {
         let menu = Menu::new();
         let mut items = Vec::new();
         let mut labels = Vec::new();
@@ -211,6 +477,12 @@ impl Tray {
         let mark = crate::i18n::mark;
         add(&menu, mark("Add new download"), TrayCmd::AddUrl);
         add(&menu, mark("Add batch download"), TrayCmd::Batch);
+        // i18n: tray menu: the links copied to the clipboard, to tick in Link grabber (as Tasks → Add batch download from clipboard)
+        add(
+            &menu,
+            mark("Add batch download from clipboard"),
+            TrayCmd::BatchClipboard,
+        );
         // i18n: tray menu: a submenu of the downloads now running; choosing one shows its progress window
         let downloads_label = mark("Downloads in progress");
         let downloads = Submenu::new(crate::i18n::t(downloads_label), false);
@@ -244,20 +516,32 @@ impl Tray {
         items.push((limiter_on.id().clone(), TrayCmd::LimiterOn));
         items.push((limiter_off.id().clone(), TrayCmd::LimiterOff));
 
-        let icon = match picture() {
+        // Windows: the size the taskbar draws the icon at, and the taskbar, drawn again for another
+        // by the watcher (`WindowsShell::fit`).
+        #[cfg(windows)]
+        let fitted = crate::win32::tray_icon_px();
+        #[cfg(windows)]
+        let px = fitted.1;
+        #[cfg(not(windows))]
+        let px = picture::fitting();
+        let icon = match picture(px) {
             Ok(icon) => icon,
             Err(e) => {
                 tracing::warn!("tray icon: no picture: {e}");
                 return None;
             }
         };
-        let tray = match TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .with_tooltip(crate::MAIN_TITLE)
-            .with_icon(icon)
-            .build()
-        {
+            .with_icon(icon);
+        // Linux and the BSDs (StatusNotifierItem): the item's title is its name in the shell's
+        // lists, KDE's notification area among them, which showed MDM's icon with no name (#1305).
+        // Not on macOS, where a title is text beside the icon in the menu bar; Windows has none.
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let builder = builder.with_title(crate::MAIN_TITLE);
+        let tray = match builder.build() {
             Ok(tray) => tray,
             Err(e) => {
                 tracing::warn!("tray icon: not made: {e}");
@@ -265,19 +549,59 @@ impl Tray {
             }
         };
 
-        let (tx, rx) = channel();
+        // Only the hidden window's handle crosses to the watcher's thread: TrayIcon stays here.
+        #[cfg(windows)]
+        let watch = {
+            let wake = ctx.clone();
+            watch::Watch::new(
+                WindowsShell {
+                    hwnd: tray.window_handle() as isize,
+                    id: None,
+                    // MDM_TEST_TRAY_RECT=0: the shell gives the icon no place, as the reporters'
+                    // did for one behind ^ (the close test, with a real icon the shell holds).
+                    rect_withheld: std::env::var_os("MDM_TEST_TRAY_RECT").is_some_and(|v| v == "0"),
+                    fit: picture::Fit::new(fitted),
+                    shown: None,
+                },
+                move || wake.request_repaint(),
+            )
+        };
+
         let wake = |tx: &Sender<TrayCmd>, ctx: &egui::Context| (tx.clone(), ctx.clone());
         let (icon_tx, icon_ctx) = wake(&tx, ctx);
+        // Windows sends a double click as down, up, double click, up: the last up is part of the
+        // double click, not a click of its own (it would open the panel again over the window).
+        let doubled: Mutex<Option<std::time::Instant>> = Mutex::new(None);
         TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = e
-            {
-                let _ = icon_tx.send(TrayCmd::Show);
-                icon_ctx.request_repaint();
-            }
+            let cmd = match e {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    position,
+                    ..
+                } => {
+                    let last = doubled.lock().ok().and_then(|mut d| d.take());
+                    if last.is_some_and(|t| t.elapsed() < double_click()) {
+                        return;
+                    }
+                    TrayCmd::Click(click_at(position.x, position.y))
+                }
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    if let Ok(mut d) = doubled.lock() {
+                        *d = Some(std::time::Instant::now());
+                    }
+                    TrayCmd::DoubleClick
+                }
+                _ => return,
+            };
+            // The window is asked for: a stall from now on is felt (crash.rs, #1126). Seen
+            // during one where the icon's events come on a thread of their own (Linux).
+            crate::crash::asked();
+            let _ = icon_tx.send(cmd);
+            icon_ctx.request_repaint();
         }));
         let (menu_tx, menu_ctx) = wake(&tx, ctx);
         let download_ids: Arc<Mutex<Vec<(MenuId, u64)>>> = Arc::default();
@@ -295,6 +619,7 @@ impl Tray {
                         .map(|(_, d)| TrayCmd::ShowDownload(*d))
                 });
             if let Some(cmd) = cmd {
+                crate::crash::asked();
                 let _ = menu_tx.send(cmd);
                 menu_ctx.request_repaint();
             }
@@ -303,35 +628,28 @@ impl Tray {
         labels.push((Entry::Sub(downloads.clone()), downloads_label));
         labels.push((Entry::Check(limiter_on.clone()), on_label));
         labels.push((Entry::Check(limiter_off.clone()), off_label));
-        Some(Tray {
+        Some(Native {
             tray,
-            tip: Default::default(),
             limiter_on,
             limiter_off,
             start_queue,
             stop_queue,
-            queue_running: std::cell::Cell::new(None),
-            rx,
             downloads,
-            shown_downloads: Default::default(),
             download_ids,
             labels,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             visible_checked: Default::default(),
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             answer: Default::default(),
             #[cfg(windows)]
-            icon_id: Default::default(),
+            watch,
+            #[cfg(windows)]
+            seen: Default::default(),
         })
     }
 
-    /// The commands since the last call.
-    pub fn poll(&self) -> Vec<TrayCmd> {
-        self.rx.try_iter().collect()
-    }
-
     /// Translate the menu again (the interface language changed).
-    pub fn relabel(&self) {
+    fn relabel(&self) {
         for (entry, source) in &self.labels {
             let text = crate::i18n::t(source);
             match entry {
@@ -342,33 +660,30 @@ impl Tray {
         }
     }
 
-    /// Keep Start / Stop main download queue in step with the queue (the menu is only told
-    /// when it changes).
-    pub fn set_queue(&self, running: bool) {
-        if self.queue_running.replace(Some(running)) != Some(running) {
-            self.start_queue.set_enabled(!running);
-            self.stop_queue.set_enabled(running);
-        }
+    /// Start / Stop main download queue, as the queue runs.
+    fn set_queue(&self, running: bool) {
+        self.start_queue.set_enabled(!running);
+        self.stop_queue.set_enabled(running);
     }
 
-    /// The icon's tip: the app's name, and while downloads run how many and how fast.
-    pub fn set_tooltip(&self, tip: &str) {
-        let mut last = self.tip.borrow_mut();
-        let due = last
-            .1
-            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
-        if last.0 != tip && due {
+    /// Set the icon's tip; false if the shell didn't take it (Windows: the watcher was busy, asked
+    /// again at the next frame).
+    fn tip(&self, tip: &str) -> bool {
+        #[cfg(windows)]
+        return self.watch.tip(tip);
+        #[cfg(not(windows))]
+        {
+            // Linux and the BSDs: the shell shows the item's title (the app's name) above the
+            // tip's text, so the tip's own first line, the name again, is left out (#1305).
+            #[cfg(not(target_os = "macos"))]
+            let tip = without_name(tip);
             let _ = self.tray.set_tooltip(Some(tip));
-            *last = (tip.to_owned(), Some(std::time::Instant::now()));
+            true
         }
     }
 
-    /// "Downloads in progress": the running downloads (id, name), the menu rebuilt only when they
-    /// change; greyed when none runs.
-    pub fn set_downloads(&self, running: &[(u64, String)]) {
-        if *self.shown_downloads.borrow() == running {
-            return;
-        }
+    /// "Downloads in progress": the running downloads (id, name); greyed when none runs.
+    fn set_downloads(&self, running: &[(u64, String)]) {
         for _ in 0..self.downloads.items().len() {
             let _ = self.downloads.remove_at(0);
         }
@@ -382,13 +697,94 @@ impl Tray {
             *d = ids;
         }
         self.downloads.set_enabled(!running.is_empty());
-        *self.shown_downloads.borrow_mut() = running.to_vec();
     }
 
-    /// Keep the Speed Limiter checks in step with the app.
-    pub fn set_limiter(&self, on: bool) {
+    /// The Speed Limiter checks.
+    fn set_limiter(&self, on: bool) {
         self.limiter_on.set_checked(on);
         self.limiter_off.set_checked(!on);
+    }
+}
+
+/// What the tests say of the icon, as off-screen tests can't make the shell answer reliably
+/// (MDM_TEST_TRAY_VISIBLE: 1 there, anything else gone; the startup and close tests use it with
+/// MDM_TEST_TRAY).
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn test_visible() -> Option<Icon> {
+    std::env::var_os("MDM_TEST_TRAY_VISIBLE")
+        .map(|v| if v == "1" { Icon::There } else { Icon::Gone })
+}
+
+/// Windows' shell, as the watcher's thread asks it: the tray's hidden window (one icon) and the
+/// icon's id once found.
+#[cfg(windows)]
+struct WindowsShell {
+    hwnd: isize,
+    id: Option<u32>,
+    rect_withheld: bool,
+    /// The size and taskbar the icon is drawn for (#1161).
+    fit: picture::Fit<(isize, u32)>,
+    /// The picture the watcher last drew the icon with, kept while the shell has it (the first is
+    /// tray-icon's).
+    shown: Option<crate::win32::TrayPicture>,
+}
+
+#[cfg(windows)]
+impl WindowsShell {
+    /// Draw icon `id` again at the size the notification area draws it now, when that changed
+    /// ([`picture::Fit`]): the taskbar's display scale changed, or Explorer started again (a new
+    /// taskbar, given tray-icon's first picture back). Explorer is waited for here, on the
+    /// watcher's thread, never on the window's (#747); a draw it didn't take is tried again with
+    /// the next question.
+    fn fit(&mut self, id: u32) {
+        let now = crate::win32::tray_icon_px();
+        if !self.fit.due(now) {
+            return;
+        }
+        let px = now.1;
+        match picture::at(px) {
+            Ok(p) => {
+                if let Some(shown) = crate::win32::tray_icon_picture(self.hwnd, id, &p.rgba, px) {
+                    self.shown = Some(shown);
+                    self.fit.drawn(now);
+                    tracing::info!(
+                        "tray icon: drawn at {px} px (from the {} px picture)",
+                        picture::source(px)
+                    );
+                }
+            }
+            Err(e) => {
+                // Never asked again for this size: the picture won't come out better.
+                self.fit.drawn(now);
+                tracing::warn!("tray icon: no {px} px picture: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl watch::Port for WindowsShell {
+    fn ask(&mut self) -> watch::Shell {
+        use crate::win32::TrayAnswer;
+        match crate::win32::tray_icon_ask(self.hwnd, self.id, self.rect_withheld) {
+            TrayAnswer::NoTaskbar => watch::Shell::NoTaskbar,
+            TrayAnswer::Silent => watch::Shell::Silent,
+            TrayAnswer::Answered { held, placed } => {
+                if let Some(id) = held {
+                    self.id = held;
+                    self.fit(id);
+                }
+                watch::Shell::Answered {
+                    placed,
+                    held: held.is_some(),
+                }
+            }
+        }
+    }
+
+    fn tip(&mut self, tip: &str) -> bool {
+        self.id
+            .is_some_and(|id| crate::win32::tray_icon_tip(self.hwnd, id, tip))
     }
 }
 
@@ -402,50 +798,66 @@ fn short(name: &str) -> String {
     s.replace('&', "&&")
 }
 
-/// The icon's picture: the app icon's ([`crate::app_picture`]), square. Never an empty one:
-/// tray-icon takes a 0×0 picture, and macOS then fails to make the menu bar item of it (it
-/// encodes the picture as a PNG, which can't be 0 wide), so before #529 macOS had no menu bar
-/// icon and closing the window quit.
-fn picture() -> Result<tray_icon::Icon, String> {
-    let p = crate::app_picture();
-    if p.width == 0 || p.width != p.height {
-        return Err(format!("{}×{} px", p.width, p.height));
+/// The icon's picture at `px` px: the app icon's hand-made picture of the size the system draws
+/// it at ([`picture`], #1161). Never an empty one: tray-icon takes a 0×0 picture, and macOS then
+/// fails to make the menu bar item of it (it encodes the picture as a PNG, which can't be 0 wide),
+/// so before #529 macOS had no menu bar icon and closing the window quit.
+fn picture(px: u32) -> Result<tray_icon::Icon, String> {
+    let p = picture::at(px)?;
+    if p.size == 0 || p.rgba.len() != (p.size * p.size * 4) as usize {
+        return Err(format!("{0}×{0} px", p.size));
     }
-    tray_icon::Icon::from_rgba(p.rgba.clone(), p.width, p.height).map_err(|e| e.to_string())
+    tray_icon::Icon::from_rgba(p.rgba, p.size, p.size).map_err(|e| e.to_string())
+}
+
+/// A tip's text without its first line when that line is the app's name: what a
+/// StatusNotifierItem shows under its title, which is the name already (#1305).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn without_name(tip: &str) -> &str {
+    match tip.strip_prefix(crate::MAIN_TITLE) {
+        Some(rest) if rest.is_empty() || rest.starts_with('\n') => rest.trim_start_matches('\n'),
+        _ => tip,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The close decision without a shell (#545, #534, #527), with the shell's answers as
-    /// Windows gives them. Measured on Windows 11 (build 26200), a new icon behind ^: placed (the
-    /// rect of ^ itself) and held; the same icon once removed: neither. The reporters' Windows
-    /// (10 and 11) gave an icon behind ^ no place: the icon there, the window left in the taskbar.
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    /// #1305: under a StatusNotifierItem's title (the app's name), the tip leaves the name out:
+    /// what follows it, or nothing while idle; a tip that doesn't start with the name is kept.
     #[test]
-    fn closing_hides_to_an_icon_the_shell_holds_even_with_no_place() {
-        let held_no_place = ShellIcon {
-            placed: false,
-            held: true,
-        };
-        let held_placed = ShellIcon {
-            placed: true,
-            held: true,
-        };
-        let none = ShellIcon {
-            placed: false,
-            held: false,
-        };
-        for icon in [held_no_place, held_placed] {
-            assert!(icon.reachable(), "{icon:?}");
-            assert_eq!(on_close(true, true, icon.reachable(), true), OnClose::Hide);
-        }
-        // No icon the shell holds (Explorer not running, the icon refused or lost): the
-        // taskbar, never a hidden window with no way back.
-        assert!(!none.reachable());
+    fn the_tip_under_the_title_leaves_the_name_out() {
+        let name = crate::MAIN_TITLE;
+        assert_eq!(without_name(name), "");
         assert_eq!(
-            on_close(true, true, none.reachable(), true),
+            without_name(&format!("{name}\n2 downloads, 1.5 MB/s")),
+            "2 downloads, 1.5 MB/s"
+        );
+        assert_eq!(
+            without_name(&format!("{name}\n2 downloads\nSpeed Limiter: 512 KB/sec")),
+            "2 downloads\nSpeed Limiter: 512 KB/sec"
+        );
+        assert_eq!(without_name("Something else"), "Something else");
+        assert_eq!(
+            without_name(&format!("{name}s and more")),
+            format!("{name}s and more")
+        );
+    }
+
+    /// The close decision (#750, #718, #754, #545): an icon the shell says is there, or no answer
+    /// at all, hides the window; only the shell saying the icon is gone leaves it in the taskbar.
+    #[test]
+    fn closing_hides_unless_the_shell_says_the_icon_is_gone() {
+        for icon in [Icon::There, Icon::Unknown] {
+            assert_eq!(
+                on_close(false, true, true, icon, true, false),
+                OnClose::Hide,
+                "{icon:?}"
+            );
+        }
+        assert_eq!(
+            on_close(false, true, true, Icon::Gone, true, false),
             OnClose::Minimize
         );
     }
@@ -454,13 +866,76 @@ mod tests {
     #[test]
     fn closing_quits_with_the_option_off_no_tray_or_nowhere_to_wait() {
         // No icon and no taskbar to wait in (Linux with no tray host): quit.
-        assert_eq!(on_close(true, true, false, false), OnClose::Quit);
-        assert_eq!(on_close(true, true, true, false), OnClose::Hide);
+        assert_eq!(
+            on_close(false, true, true, Icon::Gone, false, false),
+            OnClose::Quit
+        );
+        assert_eq!(
+            on_close(false, true, true, Icon::There, false, false),
+            OnClose::Hide
+        );
         // The option off, or no tray object at all: closing quits, whatever the shell says.
-        for shown in [true, false] {
-            assert_eq!(on_close(false, true, shown, true), OnClose::Quit);
-            assert_eq!(on_close(true, false, shown, true), OnClose::Quit);
+        for icon in [Icon::There, Icon::Unknown, Icon::Gone] {
+            assert_eq!(
+                on_close(false, false, true, icon, true, false),
+                OnClose::Quit
+            );
+            assert_eq!(
+                on_close(false, true, false, icon, true, false),
+                OnClose::Quit
+            );
         }
+    }
+
+    /// #1125: on macOS a click on MDM's icon in the Dock brings the window back, so closing
+    /// leaves MDM running there, as Mac apps do, whatever the menu bar shows of its icon and even
+    /// with no menu bar icon at all. Unticked, "Keep running when closing the window" still quits.
+    #[test]
+    fn on_macos_closing_leaves_mdm_in_the_dock() {
+        for tray in [true, false] {
+            for icon in [Icon::There, Icon::Unknown, Icon::Gone] {
+                assert_eq!(on_close(false, true, tray, icon, true, true), OnClose::Hide);
+                assert_eq!(
+                    on_close(false, false, tray, icon, true, true),
+                    OnClose::Quit
+                );
+                // Cmd+Q, MDM → Quit, Exit when done: quits.
+                assert_eq!(on_close(true, true, tray, icon, true, true), OnClose::Quit);
+            }
+        }
+    }
+
+    /// Asked to quit (File → Exit, the tray's Exit, `/exit`, Update now, "Exit when done"), MDM
+    /// quits whatever "Keep running when closing the window" and the shell say; only a plain close
+    /// of the window follows them (a finished queue set to exit used to hide MDM in the tray).
+    #[test]
+    fn a_quit_request_quits_whatever_the_close_setting_says() {
+        for keep in [true, false] {
+            for tray in [true, false] {
+                for icon in [Icon::There, Icon::Unknown, Icon::Gone] {
+                    for taskbar in [true, false] {
+                        assert_eq!(
+                            on_close(true, keep, tray, icon, taskbar, false),
+                            OnClose::Quit,
+                            "{keep} {tray} {icon:?} {taskbar}"
+                        );
+                    }
+                }
+            }
+        }
+        // The same window closed by hand, with the defaults: hidden in the tray.
+        assert_eq!(
+            on_close(false, true, true, Icon::There, true, false),
+            OnClose::Hide
+        );
+    }
+
+    /// #1365: 0, 0 is a tray that didn't say where the click was, not the screen's corner.
+    #[test]
+    fn a_click_at_0_0_has_no_place() {
+        assert_eq!(click_at(0.0, 0.0), None);
+        assert_eq!(click_at(1834.4, 1062.6), Some((1834, 1063)));
+        assert_eq!(click_at(0.0, 12.0), Some((0, 12)));
     }
 
     #[test]
@@ -472,14 +947,18 @@ mod tests {
     }
 
     /// #529: the tray's picture is a real one on every system, macOS's menu bar included (where
-    /// the window icon, `app_icon`, is empty on purpose).
+    /// the window icon, `app_icon`, is empty on purpose), at every size it is drawn at (#1161).
     #[test]
     fn the_tray_picture_is_never_empty() {
-        let p = crate::app_picture();
-        assert_eq!((p.width, p.height), (256, 256));
-        assert_eq!(p.rgba.len(), 256 * 256 * 4);
-        assert!(p.rgba.chunks(4).any(|px| px[3] > 0), "a blank picture");
-        assert!(picture().is_ok());
+        for px in [16, 20, 24, 28, 32, 40, 44, 48, 256] {
+            let p = picture::at(px).unwrap();
+            assert_eq!(p.rgba.len(), (px * px * 4) as usize);
+            assert!(
+                p.rgba.chunks(4).any(|c| c[3] > 0),
+                "{px} px: a blank picture"
+            );
+            assert!(picture(px).is_ok(), "{px} px");
+        }
         #[cfg(target_os = "macos")]
         assert_eq!(
             crate::app_icon().width,

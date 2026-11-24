@@ -43,8 +43,18 @@ Minimize hides the main window, and a progress window, in the notification area 
 leaving them on the taskbar. Closing the main window does the same: MDM keeps running until you
 choose **Tasks → Exit** or **Exit** in the tray menu.
 
-The tray menu also has **Add new download**, **Add batch download**, the **Speed Limiter**, the
+The tray menu also has **Add new download**, **Add batch download**, **Add batch download from
+clipboard**, the **Speed Limiter**, the
 **Scheduler**, the main download queue and **Options**.
+
+## Never over your game or your slides
+
+While a full-screen game, a film or a presentation is on, or the screen is locked,
+**Download complete** and MDM's other windows that come up by themselves wait. The download
+finishes as usual; its window shows when you're back, and several show one after the other, in
+the order they came. The tray icon's tip says how many wait. A link you click in the browser
+still opens at once. To have them show at once anyway, untick **Don't show pop-ups while a
+full-screen app or presentation is running** in **Options → Downloads**.
 
 ## Light while it waits
 

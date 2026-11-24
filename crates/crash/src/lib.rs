@@ -8,15 +8,19 @@
 //! - `client`: the app's side (start the monitor, messages, dump requests).
 //! - `monitor`: the monitor's side (the dump server and its events).
 //! - `analyze`: a dump made readable (stacks with function, file and line).
+//! - `modules`: a Linux dump's module list mended first (a program split in two by a gap).
 //! - `report`: the report's text and the problem's signature.
 //! - `github`: the issue form and the search for one already filed.
 //! - `symbols`: the release's symbols, fetched on demand.
 //! - `logs`: the log MDM keeps in release builds too, and its last lines.
+//! - `frame`: a crash signal's frame, for the app's handler in front of crash-handler's (#1239).
 
 pub mod analyze;
 pub mod client;
+pub mod frame;
 pub mod github;
 pub mod logs;
+mod modules;
 pub mod monitor;
 pub mod protocol;
 pub mod report;

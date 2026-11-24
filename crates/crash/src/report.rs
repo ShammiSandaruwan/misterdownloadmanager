@@ -81,9 +81,16 @@ pub fn text(input: &Input, home: Option<&Path>) -> String {
                             )
                         })
                         .unwrap_or_default();
+                    let back = if key_thread(kind, input)
+                        .is_some_and(|t| in_sleep_after_a_frame(&t.frames))
+                    {
+                        "done with that frame"
+                    } else {
+                        "back to waiting for events"
+                    };
                     let _ = writeln!(
                         s,
-                        "The window did not answer for {} s, but it was back to waiting for events when this snapshot was taken, so the stacks below don't show what held it.{ran}",
+                        "The window did not answer for {} s, but it was {back} when this snapshot was taken, so the stacks below don't show what held it.{ran}",
                         f.seconds
                     );
                 }
@@ -128,6 +135,24 @@ pub fn text(input: &Input, home: Option<&Path>) -> String {
                         "A dump asked for while MDM was running (a freeze or a panic): the window thread first."
                     );
                 }
+            }
+            // Pages read from disk meanwhile (macOS counts them for the whole of MDM): many
+            // mean the window waited for its own code or memory, read back from a slow disk;
+            // none rule the disk out (#1515: stuck on a function's first instruction).
+            if let Some(n) = input.notes.freeze.as_ref().and_then(|f| f.busy?.pageins) {
+                let _ = writeln!(
+                    s,
+                    "{n} page-ins during the freeze (pages of MDM read from disk: its code or its memory)."
+                );
+            }
+            // Where the frame was when the watchdog saw the freeze: what held it, when the
+            // snapshot came too late to show it (#574).
+            if let Some(f) = input.notes.freeze.as_ref().filter(|f| !f.step.is_empty()) {
+                let _ = writeln!(
+                    s,
+                    "When it stopped answering, the window was at: {}.",
+                    f.step
+                );
             }
             if input.notes.recovered {
                 let _ = writeln!(s, "It answered again later.");
@@ -291,6 +316,16 @@ pub struct Made {
     pub notes: Notes,
 }
 
+impl Made {
+    /// A freeze's window thread, as its dump has it (the app reads where it was stuck: #847).
+    pub fn frozen_window_thread(&self) -> Option<&Thread> {
+        if self.kind != Kind::Freeze {
+            return None;
+        }
+        window_thread(self.analysis.as_ref()?, self.notes.freeze.as_ref()?)
+    }
+}
+
 /// Read `dump` (none for an exit nothing caught), write the report beside it in `data`'s crashes
 /// folder, and return it. `symbols`: Breakpad symbol stores to try (the release's, once fetched).
 pub fn make(
@@ -312,7 +347,7 @@ pub fn make(
         time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         notes: notes.clone(),
         analysis: analysis.as_ref(),
-        log_tail: crate::logs::tail(data, 150),
+        log_tail: crate::logs::tail_or_recent(data, crate::logs::RECENT, &notes.log),
         dump: dump
             .and_then(|d| d.file_name())
             .map(|n| n.to_string_lossy().into_owned()),
@@ -447,8 +482,18 @@ pub fn stuck(
         // thread hardly ran is almost always a wait (the system's waits live there).
         None if share > STARVED_SHARE => None,
         None if main.is_some() && top.module.as_deref() == main => Some(Stuck::Starved),
+        // The C runtime's copies and compares (memcmp of an icon's first bytes, #663): never a
+        // wait, so a thread that hardly ran there waited for its memory, loaded from disk.
+        None if top.module.as_deref().is_some_and(is_memory_routines) => Some(Stuck::Starved),
         None => top.module.is_some().then_some(Stuck::Waiting),
     }
+}
+
+/// A module of the C runtime's memory and string routines only (memcpy, memcmp, memset): no
+/// wait lives there. Windows' VCRUNTIME140.dll and VCRUNTIME140_1.dll; not ucrtbase.dll, nor
+/// Linux's libc, which hold the waits as well.
+fn is_memory_routines(module: &str) -> bool {
+    module.to_ascii_lowercase().starts_with("vcruntime")
 }
 
 /// A function a thread waits in: the system's waits and sleeps, locks, I/O.
@@ -498,19 +543,22 @@ fn panic_entry(frames: &[Frame]) -> usize {
 fn key_thread<'a>(kind: Kind, input: &Input<'a>) -> Option<&'a Thread> {
     let a = input.analysis?;
     if kind == Kind::Freeze {
-        let f = input.notes.freeze.as_ref()?;
-        return a
-            .thread(f.ui_thread)
-            .filter(|_| f.ui_thread != 0)
-            .or_else(|| f.main.then(|| a.threads.first()).flatten());
+        return window_thread(a, input.notes.freeze.as_ref()?);
     }
     a.thread(a.requesting?)
 }
 
-/// A freeze whose window thread was already back in the event loop's wait when the dump was taken:
-/// a frame in progress never has that on its stack, so the frame had ended. The dump follows the
-/// watchdog's request, and came 7 s after it on a stalled computer (#355). winit's wait, on Windows;
-/// other systems' stacks keep the verdicts below.
+/// A freeze's window thread in its dump: by its id, or the first when it is the main thread.
+fn window_thread<'a>(a: &'a Analysis, f: &crate::protocol::Freeze) -> Option<&'a Thread> {
+    a.thread(f.ui_thread)
+        .filter(|_| f.ui_thread != 0)
+        .or_else(|| f.main.then(|| a.threads.first()).flatten())
+}
+
+/// A freeze whose window thread was already back in the event loop's wait (or in eframe's pause
+/// after a frame) when the dump was taken: a frame in progress never has that on its stack, so the
+/// frame had ended. The dump follows the watchdog's request, and came 7 s after it on a stalled
+/// computer (#355). winit's wait, on Windows; other systems' stacks keep the verdicts below.
 fn over_before_snapshot(kind: Kind, input: &Input) -> bool {
     kind == Kind::Freeze
         && input.notes.freeze.is_some()
@@ -519,8 +567,34 @@ fn over_before_snapshot(kind: Kind, input: &Input) -> bool {
                 f.function
                     .as_deref()
                     .is_some_and(|n| n.contains("wait_for_messages"))
-            })
+            }) || in_sleep_after_a_frame(&t.frames)
         })
+}
+
+/// The window thread in eframe's pause after a frame of a hidden or minimized window
+/// (`sleep_if_invisible_or_minimized`, 10 ms, which release builds fold into eframe's
+/// `run_ui_and_paint`): it comes after the app's logic and UI have returned, so the frame had
+/// ended. A window hidden in the notification area passes there after each of its ticks; two
+/// freezes reported just after the computer woke had their dump taken there, 8 and 15 s after
+/// they were seen (#574, #613), and their stacks said nothing of what held the window.
+fn in_sleep_after_a_frame(frames: &[Frame]) -> bool {
+    // Rust's own frames: the system's below them (ntdll, libc's nanosleep) carry no path.
+    let mut named = frames
+        .iter()
+        .filter_map(|f| f.function.as_deref())
+        .map(trim_function)
+        .filter(|n| n.contains("::"));
+    let Some(sleep) = named.next() else {
+        return false;
+    };
+    if !(sleep.starts_with("std::thread") && sleep.ends_with("sleep")) {
+        return false;
+    }
+    named.next().is_some_and(|caller| {
+        caller.starts_with("eframe::native::")
+            && (caller.ends_with("sleep_if_invisible_or_minimized")
+                || caller.ends_with("run_ui_and_paint"))
+    })
 }
 
 /// The first frame in the program's own code, past the system, Rust's standard library, locks,
@@ -722,6 +796,7 @@ mod tests {
                     main: false,
                     seconds: 9,
                     busy: None,
+                    step: String::new(),
                 }),
                 session: Some(Session {
                     version: "0.2.3".into(),
@@ -791,7 +866,9 @@ mod tests {
                         wall_ms: 7_500,
                         cpu_ms,
                         faults: Some(12_000),
+                        pageins: None,
                     }),
+                    step: String::new(),
                 }),
                 ..Default::default()
             },
@@ -840,6 +917,75 @@ mod tests {
             stuck(&f, bare.threads[0].frames.first(), main),
             Some(Stuck::Waiting)
         );
+        // #663: in the C runtime's memcmp, under MDM's own code: no wait there, so starved.
+        bare.threads[0].frames[0].module = Some("VCRUNTIME140.dll".into());
+        assert_eq!(
+            stuck(&f, bare.threads[0].frames.first(), main),
+            Some(Stuck::Starved)
+        );
+        assert_eq!(
+            signature(Kind::Freeze, &freeze_with(&bare, 100)),
+            "freeze while the computer was busy"
+        );
+    }
+
+    /// #1515: a macOS freeze, its window thread found as the dump's first (the main thread, no
+    /// id), stopped on the first instruction of one of MDM's functions: how little it ran, and
+    /// how many pages MDM read from disk meanwhile, are both said. Without page-ins (Windows,
+    /// Linux, an older MDM) the line isn't there.
+    #[test]
+    fn a_macos_freeze_says_how_much_it_ran_and_its_page_ins() {
+        let mut a = stopped_in_own_code();
+        a.threads[0].frames[0] = frame("core::ptr::drop_in_place<torrents::Outcome>");
+        let mut input = freeze_with(&a, 60);
+        let f = input.notes.freeze.as_mut().unwrap();
+        f.ui_thread = 0;
+        f.main = true;
+        f.busy = Some(crate::protocol::Busy {
+            wall_ms: 8_000,
+            cpu_ms: 60,
+            faults: Some(3_100),
+            pageins: Some(812),
+        });
+        let t = text(&input, None);
+        assert!(t.contains("-- Window thread (frozen): main (1) --"), "{t}");
+        assert!(
+            t.contains("Its thread ran only 0.1 of 8.0 s, and not in a wait"),
+            "{t}"
+        );
+        assert!(
+            t.contains(
+                "
+812 page-ins during the freeze (pages of MDM read from disk: its code or its memory).
+"
+            ),
+            "{t}"
+        );
+        // None at all is said too: the disk didn't hold it.
+        input
+            .notes
+            .freeze
+            .as_mut()
+            .unwrap()
+            .busy
+            .as_mut()
+            .unwrap()
+            .pageins = Some(0);
+        assert!(text(&input, None).contains(
+            "
+0 page-ins during the freeze"
+        ));
+        // Unknown: not said.
+        input
+            .notes
+            .freeze
+            .as_mut()
+            .unwrap()
+            .busy
+            .as_mut()
+            .unwrap()
+            .pageins = None;
+        assert!(!text(&input, None).contains("page-ins"));
     }
 
     /// #355, as reported: the dump was written 7 s after it was asked for, when the window thread
@@ -875,6 +1021,73 @@ mod tests {
         assert!(t.contains("Its thread ran 0.0 of 7.5 s"), "{t}");
         assert!(!t.contains("deadlock"), "{t}");
         assert!(!t.contains("one frame never finished"), "{t}");
+    }
+
+    /// #574 and #613, as reported (0.5.0 and 0.5.2, the window hidden in the notification area,
+    /// just after the computer woke): the dump came when the window answered again, and found its
+    /// thread in eframe's 10 ms pause after the frame. Not "a deadlock in
+    /// misterdownloadmanager::app" nor "in ntdll.dll".
+    #[test]
+    fn a_freeze_whose_snapshot_found_the_pause_after_a_frame_says_so() {
+        let system = |module: &str, offset: u64| Frame {
+            function: None,
+            file: None,
+            line: None,
+            module: Some(module.into()),
+            offset,
+        };
+        let mut a = frozen();
+        a.threads[0].frames = vec![
+            system("ntdll.dll", 0x166464),
+            system("KERNELBASE.dll", 0x1427e),
+            frame("std::thread::functions::sleep()"),
+            frame("eframe::native::wgpu_integration::impl$3::run_ui_and_paint()"),
+            frame(
+                "eframe::native::run::WinitAppWrapper::check_redraw_requests<eframe::native::wgpu_integration::WgpuWinitApp>()",
+            ),
+            frame(
+                "eframe::native::run::impl$1::new_events<eframe::native::wgpu_integration::WgpuWinitApp>()",
+            ),
+            frame("eframe::run_native()"),
+            frame("misterdownloadmanager::app()"),
+            frame("misterdownloadmanager::main()"),
+        ];
+        let mut input = freeze_with(&a, 0);
+        input.notes.freeze.as_mut().unwrap().step = "the tray icon".into();
+        assert_eq!(
+            signature(Kind::Freeze, &input),
+            "freeze over before the snapshot"
+        );
+        let t = text(&input, None);
+        assert!(
+            t.contains("done with that frame when this snapshot was taken"),
+            "{t}"
+        );
+        assert!(t.contains("the window was at: the tray icon."), "{t}");
+        assert!(!t.contains("deadlock"), "{t}");
+
+        // Linux's stack has libc's names below Rust's, and debug builds keep eframe's helper.
+        a.threads[0].frames = vec![
+            frame("clock_nanosleep"),
+            frame("std::thread::sleep"),
+            frame("eframe::native::winit_integration::sleep_if_invisible_or_minimized"),
+            frame("eframe::native::glow_integration::GlowWinitRunning::run_ui_and_paint"),
+        ];
+        assert_eq!(
+            signature(Kind::Freeze, &freeze_with(&a, 0)),
+            "freeze over before the snapshot"
+        );
+
+        // A sleep of MDM's own, inside a frame, is the frame's: still a freeze in MDM.
+        a.threads[0].frames = vec![
+            frame("std::thread::functions::sleep()"),
+            frame("misterdownloadmanager::app::App::tick()"),
+            frame("eframe::native::wgpu_integration::impl$3::run_ui_and_paint()"),
+        ];
+        assert_eq!(
+            signature(Kind::Freeze, &freeze_with(&a, 0)),
+            "freeze in misterdownloadmanager::app::App::tick"
+        );
     }
 
     #[test]

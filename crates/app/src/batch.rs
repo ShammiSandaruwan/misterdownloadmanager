@@ -15,33 +15,32 @@ pub struct Batch {
     auth: bool,
     login: String,
     password: String,
+    /// Save to: every file of the batch there; empty, each to its category's folder.
+    folder: String,
     focused: bool,
     /// The pattern's addresses (or why none), and the inputs they were made from.
     cached: Option<(PatternKey, Result<Vec<url::Url>, &'static str>)>,
+    /// The keys go to To when it opens (a pattern made from a copied address, #709), else to
+    /// the address.
+    focus_to: bool,
 }
 
 /// What a pattern's addresses are made from: address, letters, from, to, size.
 type PatternKey = (String, bool, String, String, String);
 
-/// What OK adds: the addresses, and the login if one was given.
+/// What OK adds: the addresses, the login if one was given, and the folder they all go to if
+/// one was (else each file goes to its category's folder).
 pub struct Added {
     pub urls: Vec<url::Url>,
     pub login: Option<(String, String)>,
+    pub folder: Option<std::path::PathBuf>,
 }
 
 impl Batch {
-    /// Pre-filled from the clipboard when it holds an http(s) or ftp(s) address, as IDM's.
-    pub fn new(from_clipboard: bool) -> Self {
-        let address = if from_clipboard {
-            crate::clipboard_text()
-                .map(|t| t.trim().to_owned())
-                .filter(|t| url::Url::parse(t).is_ok_and(|u| mdm_engine::supported(&u)))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+    /// Empty, the range 0 to 10.
+    pub fn new() -> Self {
         Batch {
-            address,
+            address: String::new(),
             letters: false,
             from: "0".into(),
             to: "10".into(),
@@ -49,8 +48,23 @@ impl Batch {
             auth: false,
             login: String::new(),
             password: String::new(),
+            folder: String::new(),
             focused: false,
             cached: None,
+            focus_to: false,
+        }
+    }
+
+    /// Add batch download from clipboard (#709): the copied address with its number as the
+    /// `*`, From that number and To too, the keys in To (its number selected) for the last one.
+    pub fn with_pattern(p: crate::clipbatch::Pattern) -> Self {
+        Batch {
+            address: p.address,
+            from: p.from.to_string(),
+            to: p.to.to_string(),
+            size: p.width.clamp(1, 10).to_string(),
+            focus_to: true,
+            ..Self::new()
         }
     }
 
@@ -58,6 +72,12 @@ impl Batch {
     #[cfg(test)]
     fn expand(&self) -> Vec<url::Url> {
         self.pattern().unwrap_or_default()
+    }
+
+    /// The folder Save to names, if it names one.
+    fn save_to(&self) -> Option<std::path::PathBuf> {
+        let folder = self.folder.trim();
+        (!folder.is_empty()).then(|| std::path::PathBuf::from(folder))
     }
 
     /// The addresses the pattern stands for, or why there are none (English, marked).
@@ -148,7 +168,7 @@ impl Batch {
             ctx,
             "batch",
             "Batch download",
-            [474.0, 387.0],
+            [474.0, 420.0],
             false,
             LIGHT_BG(),
             |ui, o| self.body(ui, o, urls, why),
@@ -159,6 +179,7 @@ impl Batch {
                 login: self
                     .auth
                     .then(|| (self.login.clone(), self.password.clone())),
+                folder: self.save_to(),
             }),
             Outcome::Closed => Outcome::Closed,
             Outcome::Open => Outcome::Open,
@@ -216,9 +237,9 @@ impl Batch {
             true,
             false,
         );
-        if !self.focused {
+        let focus_address = !self.focused && !self.focus_to;
+        if focus_address {
             edit.request_focus();
-            self.focused = true;
         }
 
         // Replace asterisk to: Numbers / Letters, From, To, Wildcard size.
@@ -263,7 +284,20 @@ impl Batch {
             crate::i18n::t("To:"),
             LIGHT_TEXT(),
         );
-        self.spin(ui, o, 204.0, 239.0, "to");
+        let to = self.spin(ui, o, 204.0, 239.0, "to");
+        if !self.focused {
+            if self.focus_to {
+                to.request_focus();
+            }
+            self.focused = true;
+        }
+        // Its number selected once the window has the keys (a window shown a few frames after
+        // it opens, on Linux, put the caret after it, and "12" typed made "112").
+        if self.focus_to && to.has_focus() && ui.ctx().input(|i| i.viewport().focused == Some(true))
+        {
+            winui::select_all_text(ui.ctx(), to.id, &self.to);
+            self.focus_to = false;
+        }
         // A longer translation starts earlier instead of running into the box (down to just
         // after the To box), cut with "..." past that, whole on hover.
         let size_label = crate::i18n::t("Wildcard size");
@@ -359,10 +393,32 @@ impl Batch {
             text(&p, o.x + 102.0, o.y + 317.0, &more, LIGHT_TEXT());
         }
 
+        // Save to: one folder for every file, or (empty) each to its category's folder, as Link
+        // grabber's packages.
+        // i18n: Batch download: the folder every file goes to (a label before its box)
+        let folder_label = crate::i18n::t("Save to:");
+        winui::fit(
+            ui,
+            &p,
+            o.x + 11.0,
+            winui::baseline_in(o.y + 354.0, 21.0),
+            folder_label,
+            LIGHT_TEXT(),
+            o.x + 98.0,
+            "batch-folder-label",
+        );
+        winui::folder_box(
+            ui,
+            r(o, 102.0, 354.0, 362.0, 21.0),
+            &mut self.folder,
+            "batch-folder",
+            Some(crate::i18n::t("Each file's category folder")),
+        );
+
         let valid = !urls.is_empty();
         let ok = winui::button_light(
             ui,
-            r(o, 274.0, 354.0, 73.0, 21.0),
+            r(o, 274.0, 387.0, 73.0, 21.0),
             "OK",
             if valid {
                 ButtonKind::Default
@@ -374,7 +430,7 @@ impl Batch {
         let ok = winui::why_disabled(ok, !valid, why.unwrap_or("")).clicked();
         let cancel = winui::button_light(
             ui,
-            r(o, 372.0, 354.0, 73.0, 21.0),
+            r(o, 372.0, 387.0, 73.0, 21.0),
             "Cancel",
             ButtonKind::Normal,
             false,
@@ -390,7 +446,7 @@ impl Batch {
     }
 
     /// An edit with its up-down buddy (`x` edit, `spin_x` buddy), 26 px tall.
-    fn spin(&mut self, ui: &mut Ui, o: Pos2, x: f32, spin_x: f32, which: &str) {
+    fn spin(&mut self, ui: &mut Ui, o: Pos2, x: f32, spin_x: f32, which: &str) -> egui::Response {
         let letters = self.letters && which != "size";
         let value = match which {
             "from" => &mut self.from,
@@ -407,10 +463,9 @@ impl Batch {
             (0, 999_999_999)
         };
         if !letters {
-            winui::spin_box(ui, rc, value, min, max, true, &id);
-            return;
+            return winui::spin_box(ui, rc, value, min, max, true, &id);
         }
-        let (_, step) = winui::spin_frame(ui, rc, true, &id, |ui, text| {
+        let (resp, step) = winui::spin_frame(ui, rc, true, &id, |ui, text| {
             winui::field_text(ui, text, value, true)
         });
         value.retain(|c| c.is_ascii_alphabetic());
@@ -428,6 +483,7 @@ impl Batch {
                 (n as char).to_string()
             };
         }
+        resp
     }
 }
 
@@ -438,8 +494,51 @@ mod tests {
     fn batch(address: &str) -> Batch {
         Batch {
             address: address.into(),
-            ..Batch::new(false)
+            ..Batch::new()
         }
+    }
+
+    /// #709: a numbered address copied (Add batch download from clipboard): the window opens
+    /// with its pattern, the copied address first, To ready for the last number.
+    #[test]
+    fn a_copied_numbered_address_fills_the_pattern() {
+        let p = crate::clipbatch::numbered("https://media.example.org/show/ep01.mp4").unwrap();
+        let mut b = Batch::with_pattern(p);
+        assert!(b.focus_to);
+        assert_eq!(
+            (
+                b.address.as_str(),
+                b.from.as_str(),
+                b.to.as_str(),
+                b.size.as_str()
+            ),
+            ("https://media.example.org/show/ep*.mp4", "1", "1", "2")
+        );
+        assert_eq!(
+            b.expand().iter().map(|u| u.as_str()).collect::<Vec<_>>(),
+            ["https://media.example.org/show/ep01.mp4"]
+        );
+        b.to = "12".into();
+        let urls = b.expand();
+        assert_eq!(urls.len(), 12);
+        assert_eq!(urls[11].as_str(), "https://media.example.org/show/ep12.mp4");
+        assert!(
+            !Batch::new().focus_to,
+            "File → Add batch download: the address"
+        );
+    }
+
+    /// #1403: Save to empty (or blank) gives no folder, each file going to its category's;
+    /// a folder typed or chosen is given whole, without the spaces around it.
+    #[test]
+    fn save_to_gives_the_batch_its_folder() {
+        let mut b = batch("http://x/img*.jpg");
+        assert_eq!(b.save_to(), None);
+        b.folder = "   ".into();
+        assert_eq!(b.save_to(), None);
+        let folder = std::env::temp_dir().join("Batch pictures");
+        b.folder = format!("  {}  ", folder.display());
+        assert_eq!(b.save_to(), Some(folder));
     }
 
     #[test]

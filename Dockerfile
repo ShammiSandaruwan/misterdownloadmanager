@@ -10,13 +10,17 @@
 # `--build-arg PROFILE=dev` builds quicker, for a try.
 ARG PROFILE=release
 
-FROM rust:1-trixie AS build
+# Both images are pinned by digest (the multi-platform index's), the tag kept to say which one; a
+# build gets exactly these until the digests are moved on. To move them: the tag's current digest
+# from `docker buildx imagetools inspect rust:1-trixie` (and debian:trixie-slim), the "Digest:" line.
+FROM rust:1-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS build
 ARG PROFILE
 # The program links only the C library: the window's libraries (X11, Wayland, OpenGL, EGL,
 # xkbcommon) are loaded when a window opens, and the server opens none. So no GTK or GL here or
-# in the image; cmake for the TLS library (aws-lc).
+# in the image; cmake for the TLS libraries (aws-lc, and BoringSSL under the browser-like
+# connection, #668) and libclang for BoringSSL's bindings.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends cmake \
+ && apt-get install -y --no-install-recommends cmake libclang-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
@@ -31,7 +35,7 @@ RUN set -e; \
     strip /out/*; \
     rm -rf target /usr/local/cargo/registry /usr/local/cargo/git
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 # The certificates downloads are checked against; nothing else (above).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \

@@ -59,11 +59,12 @@ for pair in "${targets[@]}"; do
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
   # Crash reports: the release's symbols for this processor (the -symbols zip, one per .dmg) from
-  # the programs' debug info, which stays in the build's object files until dsymutil gathers it.
+  # the programs' debug info, which stays in the build's object files until dsymutil gathers it,
+  # read with the program itself for its unwinding tables (symbols.py: the dSYM+program pair).
   syms=()
   for p in "${programs[@]}"; do
     dsymutil "$root/target/$t/release/$p" -o "$stage/$arch/dsym/$p.dSYM"
-    syms+=("$stage/$arch/dsym/$p.dSYM")
+    syms+=("$stage/$arch/dsym/$p.dSYM+$root/target/$t/release/$p")
   done
   python3 "$root/tools/installer/symbols.py" "macos-$arch" "$version" "$dist" "${syms[@]}"
   # Then the programs without their debug map and local symbols (the UUID that matches them to
@@ -91,9 +92,43 @@ for pair in "${targets[@]}"; do
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- MDM opens .torrent files and magnet links (#698): Finder offers it for them, and hands
+       them over as Apple events (crates/app/src/unix.rs open_events). The .torrent type is
+       imported: an app that knows it better (one that exports it) keeps its description. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>BitTorrent Document</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Default</string>
+      <key>LSItemContentTypes</key><array><string>org.bittorrent.torrent</string></array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>org.bittorrent.torrent</string>
+      <key>UTTypeDescription</key><string>BitTorrent Document</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>torrent</string></array>
+        <key>public.mime-type</key><array><string>application/x-bittorrent</string></array>
+      </dict>
+    </dict>
+  </array>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>Magnet link</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleURLSchemes</key><array><string>magnet</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 EOF
+  plutil -lint "$app/Contents/Info.plist"
   # The Safari extension (it carries its own copy of the helper, signed for its sandbox).
   "$root/tools/safari/build-appex.sh" "$app" "$arch-apple-macos14.0" "$root/target/extension/safari" \
     "$app/Contents/MacOS/misterdownloadmanager-nmhost" "$version" "$sign"

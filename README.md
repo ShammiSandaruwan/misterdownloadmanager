@@ -6,6 +6,8 @@
 
 <h3 align="center">Downloads faster than IDM. Free, forever.</h3>
 
+<p align="center">🌐 <a href="https://misterdownloadmanager.com"><b>misterdownloadmanager.com</b></a>: the official website, with the downloads, help and news. Liked MDM? <a href="https://misterdownloadmanager.com/#rate">Rate it there</a>, one to five stars.</p>
+
 <p align="center">
   <a href="https://github.com/anefzaoui/misterdownloadmanager/releases/latest"><img src="https://img.shields.io/badge/Download%20for-Windows-2a78d6?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDMuNWw4LjUtMS4ydjguMkgyek0xMS41IDIuMkwyMiAuOHY5LjdIMTEuNXpNMiAxMS41aDguNXY4LjJMMiAxOC41ek0xMS41IDExLjVIMjJ2OS43bC0xMC41LTEuNHoiLz48L3N2Zz4%3D" alt="Download for Windows" height="34"></a>
   <a href="https://github.com/anefzaoui/misterdownloadmanager/releases/latest"><img src="https://img.shields.io/badge/Download%20for-macOS-2a78d6?style=flat-square&logo=apple&logoColor=white" alt="Download for macOS" height="34"></a>
@@ -19,22 +21,27 @@
   <sub>The Chrome Web Store's is for
   <img src="docs/images/browsers/edge.png" width="16" height="16" alt=""> Edge,
   <img src="docs/images/browsers/brave.png" width="16" height="16" alt=""> Brave,
-  <img src="docs/images/browsers/opera.png" width="16" height="16" alt=""> Opera and Vivaldi too (<a href="docs/browser-integration.md">how</a>).</sub>
+  <img src="docs/images/browsers/opera.png" width="16" height="16" alt=""> Opera, Vivaldi and Helium too (<a href="docs/browser-integration.md">how</a>).</sub>
 </p>
 
 <p align="center">
+  <a href="https://youtu.be/TATDxWuu4Q8"><img src="docs/images/film-thumb.webp" alt="Mister Download Manager film, 1:09, plays on YouTube" width="880"></a>
+</p>
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/337427" target="_blank"><img src="https://trendshift.io/api/badge/trendshift/repositories/337427/daily?language=Rust" alt="Mister Download Manager on Trendshift: number 1 Rust repository of the day" width="200" height="44"></a><br>
   <a href="https://github.com/anefzaoui/misterdownloadmanager/stargazers"><img src="https://img.shields.io/github/stars/anefzaoui/misterdownloadmanager?style=social&label=Star%20MDM" alt="Star Mister Download Manager on GitHub" height="28"></a><br>
   <sub>⭐ <b>Like it? Give it a star.</b> MDM has no ads and no marketing budget: stars are how people find it.</sub>
 </p>
 
 <p align="center">
-  Windows 10 and 11 · Linux (Ubuntu, Debian, Mint, Fedora, openSUSE, Arch and more) · macOS (Apple Silicon and Intel, experimental)<br>
+  Windows 10 and 11 (x64, ARM64, 32-bit) · Linux (Ubuntu, Debian, Mint, Fedora, openSUSE, Arch and more; x86-64 and ARM64) · macOS (Apple Silicon and Intel, experimental)<br>
   86 languages · no ads, no trial, no sign-up
 </p>
 
 <table align="center">
   <tr>
-    <td align="center" width="210"><img src="docs/images/icons/faster.png" width="76" alt=""><h1>5×</h1><b>Faster</b><br><sub>a 1 GB file: 1 s instead of 5.5 s</sub></td>
+    <td align="center" width="210"><img src="docs/images/icons/faster.png" width="76" alt=""><h1>5×</h1><b>Faster</b><br><sub>a 1 GB file: 1 s instead of 5.5 s, on a local test server</sub></td>
     <td align="center" width="210"><img src="docs/images/icons/languages.png" width="76" alt=""><h1>+46</h1><b>More languages</b><br><sub>86 instead of IDM's 40</sub></td>
     <td align="center" width="210"><img src="docs/images/icons/free.png" width="76" alt=""><h1>100%</h1><b>Cheaper (free!)</b><br><sub>no licence, no trial, ever</sub></td>
     <td align="center" width="210"><img src="docs/images/icons/torrent.png" width="76" alt=""><h1>Torrent</h1><b>Supported fully</b><br><sub>magnet links, .torrent files, seeding</sub></td>
@@ -85,8 +92,9 @@
 <!-- compare:end -->
 
 Nothing new to learn: the toolbar, the categories, the list of downloads, the progress window and
-the browser button are where you expect them. Measured on the same computer, same files, both
-programs at their default settings ([how we measured](#the-benchmark-in-detail)).
+the browser button are where you expect them. Measured on the same computer, downloading from a
+test server on that computer (a loopback test: it times the programs, not an internet connection),
+same files, both programs at their default settings ([how we measured](#the-benchmark-in-detail)).
 
 ## Download
 
@@ -104,11 +112,32 @@ one:
 | **`...-setup.exe`** | **Not sure? Take this one.** It installs MDM, connects it to your browser and asks your language. |
 | `...-portable.zip` | You want MDM on a USB stick or without installing: unzip and run. Everything stays in its folder. |
 | `...-x64.zip` | You want the plain programs without an installer. |
+| `...-setup-arm64.exe`, `...-portable-arm64.zip`, `...-arm64.zip` | The same three for **Windows on ARM** (Snapdragon and other ARM PCs). |
+| `...-setup-x86.exe`, `...-portable-x86.zip`, `...-x86.zip` | The same three for **32-bit Windows 10**. There, choose your own ffmpeg in **Helpers** for the best video qualities: none is built for it that MDM can check. |
 | `...-extension-chromium.zip` | You want to add the browser extension by hand (Chrome, Edge, Brave, Opera, Vivaldi). From the stores is easier: [Add to Chrome](https://chromewebstore.google.com/detail/mister-download-manager/ejoleppdfgjdndddcjoehopknmlglojp), [Add to Firefox](https://addons.mozilla.org/firefox/addon/mister-download-manager/). |
+
+The ARM64 and 32-bit files come with every release after 0.5.2; **Check for updates** keeps each
+copy on its own processor's files.
 
 > [!NOTE]
 > Windows may say *"Windows protected your PC"* the first time, because this early version isn't
 > code-signed yet. Click **More info**, then **Run anyway**.
+>
+> Your antivirus flags it? See [My antivirus flags MDM](https://misterdownloadmanager.com/help/troubleshooting.html#antivirus): how to check that your copy is ours, and report the false alarm.
+
+Or with [WinGet](https://learn.microsoft.com/windows/package-manager/winget/), Windows' package
+manager: in a terminal, the first line installs MDM and the second updates it.
+
+```
+winget install AhmedNefzaoui.MisterDownloadManager
+winget upgrade AhmedNefzaoui.MisterDownloadManager
+```
+
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Which Windows files are signed, who reviews and approves them, and what MDM sends over the
+network: [code signing policy](https://misterdownloadmanager.com/code-signing-policy.html).
 
 ### On Linux
 
@@ -124,6 +153,7 @@ Up to version 0.2.4, the files' names end in `-experimental`.
 | `...-linux-x86_64.rpm` | Fedora, openSUSE, RHEL: `sudo dnf install ./<file>.rpm`. |
 | `...-linux-x86_64.AppImage` | Any Linux. Make it executable and run it. |
 | `...-linux-x86_64.tar.gz` | The plain programs, for any distribution. |
+| `...-linux-arm64.*` | The same four for 64-bit ARM computers, from the release after 0.5.2 (built and tested on GitHub's ARM machines). |
 
 <p align="center">
   <picture>
@@ -275,14 +305,14 @@ right-to-left window.
 - **Speeds up every download** by fetching parts of the file at the same time, and keeps
   re-balancing until the last byte.
 - **Resumes** after a crash, a restart or a dropped connection, without starting over.
-- **Catches downloads from Firefox, Chrome, Edge, Brave, Opera and Vivaldi** (the extension is
-  on Firefox Add-ons and the Chrome Web Store), and gives them back to the browser when MDM isn't
-  running.
+- **Catches downloads from Firefox, Chrome, Edge, Brave, Opera, Vivaldi and Helium** (the
+  extension is on Firefox Add-ons and the Chrome Web Store), and gives them back to the browser
+  when MDM isn't running.
 - **Downloads videos** from web pages (a button appears over the video; playlists, subtitles,
   the sound alone), **image galleries** with gallery-dl, and **torrents and magnet links**
   (sequential order, RSS feeds, sharing limits).
 - **Many links at once**: the Link grabber sorts them into packages and extracts the archives
-  (zip, 7z, rar) when they're in. Debrid accounts (Real-Debrid, AllDebrid, Premiumize; experimental) download
+  (zip, 7z, rar) when they're in. It takes Click'n'Load from link sites, asking once per site. Debrid accounts (Real-Debrid, AllDebrid, Premiumize, TorBox, Mega-Debrid; experimental) download
   file-host links through your own account.
 - **Downloads overnight** with queues and a scheduler that can wake the computer, then shuts it
   down if you like.
@@ -293,6 +323,9 @@ right-to-left window.
 - **Works from scripts too**: IDM's command-line switches, a command-line tool, and a local API for other programs ([how](docs/command-line.md)).
 - **Works with your AI assistant**: an MCP server lets Claude, Cursor or VS Code list, add, pause and remove your downloads ([set it up](docs/ai-assistants.md)).
 - **Leaves you some speed**: limit one download or all of them, only while you're at the computer.
+- **Stays out of your game**: while a full-screen game, video or presentation is on, or the screen
+  is locked, **Download complete** and MDM's other pop-ups wait, and show when you're back
+  ([how](docs/options.md#downloads)).
 - **Day and dark mode, and themes**: Classic, Native, High contrast, Metro, Adwaita, Breeze,
   Luna, Aero and Aqua, or your own in a text file ([how](docs/themes.md)). Everything larger, up
   to 200 %, with **View → Interface size**. 86 languages, and a portable version for USB sticks.
@@ -353,7 +386,12 @@ working, not a copy of anyone's software.
 <details>
 <summary><b>Build from source</b></summary>
 
-Requires Rust stable 1.95 or later (the MSVC toolchain on Windows).
+Requires Rust stable 1.98 or later (the MSVC toolchain on Windows), and for the engine's
+browser-like connection (BoringSSL, built from source): CMake, LLVM's libclang and, on Windows,
+NASM (`winget install Kitware.CMake LLVM.LLVM NASM.NASM`; on Linux `cmake` and
+`libclang-dev`; on macOS Xcode's command line tools and `cmake`).
+`cargo build -p mdm-app --no-default-features` builds the app without it (a site that refuses MDM's
+own connection then stays refused).
 
 ```
 cargo build --release
@@ -364,8 +402,11 @@ This makes `misterdownloadmanager.exe` (the app), `misterdownloadmanager-cli.exe
 command line), `misterdownloadmanager-mcp.exe` (the MCP server for AI assistants) and
 `misterdownloadmanager-nmhost.exe` (the browser host) in `target\release\`.
 `tools\installer\build.ps1` builds the installer and both zips into `target\dist\` (needs
-[Inno Setup 6](https://jrsoftware.org/isinfo.php)); a `vX.Y.Z` tag does the same on GitHub
-Actions and publishes the release.
+[Inno Setup 6.3](https://jrsoftware.org/isinfo.php) or later), for x64; `-Arch arm64` or
+`-Arch x86` for Windows on ARM or 32-bit Windows (after `rustup target add
+aarch64-pc-windows-msvc` or `i686-pc-windows-msvc`). `tools/installer/build-linux.sh` builds the
+Linux files for the machine's own processor (x86-64 or ARM64). A `vX.Y.Z` tag does all of them
+on GitHub Actions and publishes the release.
 
 Browser integration from a build: register the native messaging host with
 `target\release\misterdownloadmanager-nmhost.exe --register` (undo with `--unregister`), then in
@@ -391,7 +432,7 @@ pieces fit.
 | [`mdm-remote`](crates/remote) | The remote control: the HTTPS server and page a paired phone uses |
 | [`mdm-crash`](crates/crash) | Crash and freeze reports: the monitor, minidumps, stacks |
 | [`mdm-debrid`](crates/debrid) | Debrid accounts through the services' official APIs |
-| [`mdm-extract`](crates/extract) | Archive extraction (zip, tar, gz, xz; 7z and RAR through 7-Zip) |
+| [`mdm-extract`](crates/extract) | Archive extraction (zip, tar, gz, xz; 7z and RAR through 7-Zip; in place through HatchZip) |
 | [`mdm-geo`](crates/geo) | A server's country, from an IP table on this computer |
 | [`mdm-tools`](crates/tools) | yt-dlp and ffmpeg for video pages, gallery-dl for galleries |
 | [`mdm-torrent`](crates/torrent) | BitTorrent through librqbit |
@@ -410,11 +451,13 @@ pieces fit.
 | `tools/lab/wsl/` | A WSL2 machine that builds MDM for Linux in minutes and shoots its windows on a virtual screen ([README](tools/lab/wsl/README.md)) |
 | `tools\lab\progress-shots.ps1` | The progress window of a video (yt-dlp) and of a torrent, from a swarm on this computer (`cargo run -p mdm-torrent --example swarm`) |
 | `python tools/website/build.py --serve` | misterdownloadmanager.com into `target/site` (help pages from `docs/`, news from the CHANGELOG, FAQ and legal pages from `website/content/`), served on http://127.0.0.1:8765; GitHub Pages publishes it (`pages.yml`) |
+| `website/ratings/`, `website/markdown/` | The website's two Cloudflare Workers: the visitors' star ratings ([README](website/ratings/README.md)), and Markdown for AI tools and agents ([README](website/markdown/README.md)). Every page of the site also has a Markdown version (`/download.md` beside `/download.html`), and the site publishes `llms.txt`, an API catalog and an MCP server card: [For AI tools and agents](https://misterdownloadmanager.com/agents.html) |
 | `python tools/readme/social.py` | The repository's social preview card (`docs/images/social-preview.png`) |
 | `MDM_FIT_AUDIT=<file>` | Lists every text that doesn't fit its window or runs over another, for checking a translation |
 | `MDM_OFFSCREEN=1` | Opens every window off the screen, without focus, tray icon or sound (screenshots and checks) |
 | `MDM_TEST_TRASH_DIR=<folder>` | Tests only: archives deleted after extracting go into this folder, never into the real Recycle Bin or Trash |
 | `MDM_TEST_7ZIP=<program>\|none` | Tests only: the 7-Zip program to use for 7z and RAR archives, or `none` to act as if 7-Zip weren't installed |
+| `MDM_TEST_HATCHZIP=<program>\|none` | Tests only: the HatchZip program to use (extraction in place), or `none` to act as if HatchZip weren't installed |
 
 </details>
 
@@ -429,9 +472,10 @@ Linux, and some corners are still "good enough for now".
 - Not yet: code signing. The macOS builds are untested; on Linux, screen readers (Orca) and
   Flatpak browsers aren't supported yet.
 
-Bug reports and ideas are welcome in
+Bug reports are welcome in
 [Issues](https://github.com/anefzaoui/misterdownloadmanager/issues/new/choose): **Help → Report a problem**
-in the app fills in your version and system. Pull requests are accepted under the same licence: start with [CONTRIBUTING.md](CONTRIBUTING.md).
+in the app fills in your version and system. Ideas are welcome in
+[Discussions](https://github.com/anefzaoui/misterdownloadmanager/discussions/categories/ideas). Pull requests are accepted under the same licence: start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Made possible by these amazing humans
 
@@ -500,7 +544,8 @@ Built on [egui](https://github.com/emilk/egui) through
 [storytold/craft-libs](https://github.com/storytold/craft-libs) (MIT OR Apache-2.0),
 [librqbit](https://github.com/ikatson/rqbit) (Apache-2.0),
 [zip](https://github.com/zip-rs/zip2) (MIT), and [yt-dlp](https://github.com/yt-dlp/yt-dlp)
-(Unlicense, run as a separate program; as are 7-Zip for 7z and RAR archives). Flags from
+(Unlicense, run as a separate program; as are 7-Zip for 7z and RAR archives, and
+[HatchZip](https://github.com/xevrion/hatchzip) (MIT OR Apache-2.0) when installed). Flags from
 [flag-icons](https://github.com/lipis/flag-icons) (MIT); pictures drawn with
 [rough.js](https://roughjs.com/) (MIT) in [Patrick Hand](https://fonts.google.com/specimen/Patrick+Hand)
 (SIL OFL) and [Vega-Lite](https://vega.github.io/vega-lite/) (BSD-3). Bundled icons and artwork

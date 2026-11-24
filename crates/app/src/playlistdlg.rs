@@ -29,6 +29,8 @@ pub struct PlaylistAdd {
     pub ext: &'static str,
     /// Where they go: Save to, then a folder named after the list.
     pub folder: PathBuf,
+    /// The category each is listed under: Music for a sound-only quality (#611), else Video.
+    pub category: crate::model::Category,
     pub start_now: bool,
     /// What the browser's request for the page carried, for each look-up.
     pub context: mdm_ipc::Command,
@@ -41,10 +43,16 @@ struct Pick {
     ext: &'static str,
 }
 
+impl Pick {
+    fn sound_only(&self) -> bool {
+        mdm_tools::resolve::sound_only(&self.selector, self.ext)
+    }
+}
+
 /// The heights offered, as "Up to …p": each video at that height, or the best below it.
 const HEIGHTS: [u32; 6] = [2160, 1440, 1080, 720, 480, 360];
 /// The one chosen at first: Up to 1080p.
-const DEFAULT_PICK: usize = 3;
+const DEFAULT_PICK: usize = 4;
 
 fn picks(merge: bool) -> Vec<Pick> {
     let mut out = vec![Pick {
@@ -53,6 +61,14 @@ fn picks(merge: bool) -> Vec<Pick> {
         selector: if merge { "bv*+ba/b" } else { "b" }.into(),
         ext: "mp4",
     }];
+    // #1439: each video's best H.264 picture with AAC sound, picked as they are (never
+    // converted), as a single video's Most compatible line.
+    out.push(Pick {
+        // i18n: a quality in Download video for a whole playlist: each video's best H.264 video with AAC sound, an MP4 that every video editor, TV and phone plays; keep "(H.264 + AAC)" as it is
+        label: crate::i18n::t("Most compatible (H.264 + AAC)").to_owned(),
+        selector: mdm_tools::resolve::compatible_selector(merge, None),
+        ext: "mp4",
+    });
     for h in HEIGHTS {
         out.push(Pick {
             label: crate::i18n::fmt(
@@ -127,6 +143,8 @@ pub struct PlaylistView {
     pick: usize,
     /// The file type the chosen quality gives (each row shows its icon).
     ext: &'static str,
+    /// The chosen quality saves only the sound (#611: Save to is then the Music category's).
+    sound: bool,
     error: Option<String>,
     confirm: Option<(Confirm, bool)>,
 }
@@ -155,6 +173,7 @@ impl PlaylistView {
             rows: Default::default(),
             pick: DEFAULT_PICK,
             ext: "mp4",
+            sound: false,
             error: None,
             confirm: None,
         };
@@ -165,7 +184,7 @@ impl PlaylistView {
     /// A listed playlist without yt-dlp or the network (`/show video-playlist`: the window's
     /// check in every language, its screenshots), its quality the one at position `pick` in the
     /// list (the same in every language; not a number: the default). Without ffmpeg the list
-    /// ends at "Audio only, original" (7).
+    /// ends at "Audio only, original" (8).
     pub fn sample(pick: &str) -> Self {
         let titles = [
             ("Segmented downloads, explained", Some(754.0), false),
@@ -210,6 +229,7 @@ impl PlaylistView {
             rows: Default::default(),
             pick,
             ext: picks[pick].ext,
+            sound: picks[pick].sound_only(),
             error: None,
             confirm: None,
         }
@@ -285,6 +305,19 @@ impl PlaylistView {
 
     pub fn chosen(&self) -> usize {
         self.chosen
+    }
+
+    /// The quality chosen saves only the sound.
+    pub fn sound_only(&self) -> bool {
+        self.sound
+    }
+
+    /// The quality chosen converts the sound (MP3, Opus, FLAC), which keeps no chapters (#827).
+    pub fn converts(&self) -> bool {
+        let picks = picks(true);
+        picks
+            .get(self.pick.min(picks.len().saturating_sub(1)))
+            .is_some_and(|p| mdm_tools::resolve::audio_conversion(&p.selector).is_some())
     }
 
     /// Fewer listed than the site says the list has.
@@ -586,6 +619,7 @@ impl PlaylistView {
         }
         if let Some(p) = picks.get(self.pick.min(picks.len().saturating_sub(1))) {
             self.ext = p.ext;
+            self.sound = p.sound_only();
         }
     }
 
@@ -626,13 +660,15 @@ impl PlaylistView {
         }
     }
 
-    /// What Download adds: the ticked videos, the quality chosen, into Save to/<list title>.
+    /// What Download adds: the ticked videos, the quality chosen, into Save to/<list title>,
+    /// listed under `category`.
     pub fn add(
         &self,
         folder: &Path,
         merge: bool,
         start_now: bool,
         context: &mdm_ipc::Command,
+        category: crate::model::Category,
     ) -> PlaylistAdd {
         let picks = picks(merge);
         let pick = &picks[self.pick.min(picks.len() - 1)];
@@ -648,6 +684,7 @@ impl PlaylistView {
             selector: pick.selector.clone(),
             ext: pick.ext,
             folder: folder.join(mdm_engine::naming::sanitize(&self.title)),
+            category,
             start_now,
             context: context.clone(),
         }
@@ -672,6 +709,12 @@ mod tests {
     fn qualities_for_a_list() {
         let m = picks(true);
         assert_eq!(m[0].selector, "bv*+ba/b");
+        // #1439: the most compatible, right after the best.
+        assert_eq!(
+            m[1].selector,
+            "bv[vcodec^=avc]+ba[acodec^=mp4a]/b[vcodec^=avc][acodec^=mp4a]"
+        );
+        assert_eq!(picks(false)[1].selector, "b[vcodec^=avc][acodec^=mp4a]");
         assert_eq!(
             m[DEFAULT_PICK].selector,
             "bv*[height<=1080]+ba/b[height<=1080]"
@@ -684,5 +727,10 @@ mod tests {
         assert_eq!(plain[DEFAULT_PICK].selector, "b[height<=1080]");
         assert!(!plain.iter().any(|p| p.selector.starts_with("mp3:")));
         assert!(!plain.iter().any(|p| p.ext == "opus" || p.ext == "flac"));
+        // #611: the "Audio only" ones save only the sound, the heights don't.
+        for p in m.iter().chain(&plain) {
+            let audio = p.selector == "ba" || p.ext != "mp4";
+            assert_eq!(p.sound_only(), audio, "{}", p.selector);
+        }
     }
 }

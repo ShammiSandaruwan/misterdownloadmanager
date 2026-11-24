@@ -17,9 +17,9 @@
 //! (learn.microsoft.com/microsoft-edge/extensions/developer-guide/native-messaging, Linux);
 //! Brave's from `brave_main_delegate.cc` (Linux: Chrome's, `/etc/opt/chrome`); Vivaldi, built
 //! without Chrome's branding, reads Chromium's (as Vivaldi's forum confirms); Firefox's from
-//! MDN's "Native manifests" (Linux, global: `/usr/lib/mozilla` or `/usr/lib64/mozilla`). Opera,
-//! Helium, Thorium and Firefox's forks document none: they keep their manifest in the home
-//! folder.
+//! MDN's "Native manifests" (Linux, global: `/usr/lib/mozilla` or `/usr/lib64/mozilla`); Helium
+//! reads Chromium's, then Chrome's (its patch, above). Opera, Thorium and Firefox's forks
+//! document none: they keep their manifest in the home folder.
 
 use std::path::{Path, PathBuf};
 
@@ -54,6 +54,13 @@ pub struct Browser {
     /// macOS: the folder under ~/Library/Application Support whose `NativeMessagingHosts` a
     /// Chromium browser reads when it isn't its own data folder (Brave reads Chrome's).
     pub mac_hosts: Option<&'static str>,
+    /// It offers the extensions named in its data folders' `External Extensions` (Chromium's
+    /// DIR_USER_EXTERNAL_EXTENSIONS, read for one user) at its next start: on Linux (Chromium's
+    /// branding only, not Chrome's) and on macOS ([`external_dirs`]).
+    pub linux_user_external: bool,
+    pub mac_user_external: bool,
+    /// The store's update service as it names it there.
+    pub store_update_url: &'static str,
 }
 
 const fn chromium(
@@ -73,6 +80,9 @@ const fn chromium(
         linux_home: &[],
         linux_system: &[],
         mac_hosts: None,
+        linux_user_external: false,
+        mac_user_external: false,
+        store_update_url: crate::extension::STORE_UPDATE_URL,
     }
 }
 
@@ -86,6 +96,19 @@ impl Browser {
     /// On Linux it reads the manifests for everyone in `folders` too.
     const fn linux_system_in(mut self, folders: &'static [&'static str]) -> Browser {
         self.linux_system = folders;
+        self
+    }
+
+    /// It reads `External Extensions` in its data folders, for one user, on Linux and macOS.
+    const fn user_external(mut self, linux: bool, mac: bool) -> Browser {
+        self.linux_user_external = linux;
+        self.mac_user_external = mac;
+        self
+    }
+
+    /// It names the store's update service `url` (Helium).
+    const fn store_update_url(mut self, url: &'static str) -> Browser {
+        self.store_update_url = url;
         self
     }
 }
@@ -131,6 +154,9 @@ const fn gecko(
         linux_home,
         linux_system: &[],
         mac_hosts: None,
+        linux_user_external: false,
+        mac_user_external: false,
+        store_update_url: crate::extension::STORE_UPDATE_URL,
     }
 }
 
@@ -165,7 +191,8 @@ pub const BROWSERS: &[Browser] = &[
             "google-chrome-canary",
         ],
     )
-    .linux_system_in(&[ETC_CHROME]),
+    .linux_system_in(&[ETC_CHROME])
+    .user_external(false, true),
     chromium(
         "Chromium",
         &["Chromium.app"],
@@ -261,14 +288,23 @@ pub const BROWSERS: &[Browser] = &[
         &["opera"],
     ),
     // Helium reads its own folder, then Chrome's (on Linux and macOS); `.dev` is an unofficial
-    // build's.
+    // build's. On Linux, built with Chromium's branding, it then reads Chromium's folder for
+    // everyone, then Chrome's (its scan-chrome-native-messaging-hosts.patch; both paths are in
+    // its program, #685), so the .deb's and .rpm's manifest covers it. On Windows it reads
+    // Chromium's key, then Chrome's (launch_context_win.cc), as Chromium does. It offers the
+    // extensions named in its own folder's `External Extensions` on Linux and macOS, through its
+    // services when they name the store by its own address; Chrome's entries (the registry's on
+    // Windows) name Google's, which answers it "no update", so it offers nothing from them (#685).
     chromium(
         "Helium",
         &["Helium.app"],
         &["helium", "helium-browser"],
         &["net.imput.helium"],
         &["net.imput.helium", "net.imput.helium.dev"],
-    ),
+    )
+    .linux_system_in(&[ETC_CHROMIUM, ETC_CHROME])
+    .user_external(true, true)
+    .store_update_url(crate::extension::HELIUM_STORE_UPDATE_URL),
     // Thorium's and Arc's folders: unverified.
     chromium(
         "Thorium",
@@ -508,6 +544,76 @@ fn host_dirs_in(
     dirs
 }
 
+/// A browser's folder of external extensions in its data folder (Chromium's
+/// DIR_USER_EXTERNAL_EXTENSIONS).
+const USER_EXTERNAL: &str = "External Extensions";
+
+/// Linux and macOS: the folders whose `<id>.json`, naming the store's update service as the
+/// browser reading it names it (the second of each pair), makes it offer that extension at its
+/// next start ("New extension added", the user turning it on there), for this user (`home`,
+/// `config` = $XDG_CONFIG_HOME) or for everyone, each given only where its browser is.
+///
+/// For one user, each browser marked so reads `External Extensions` in its data folder: Chrome on
+/// macOS, Helium on both, by its own name for the store (#685); Chrome on Linux reads none in the
+/// home folder. For everyone, Chrome's: on macOS `/Library/Application Support/Google/Chrome/
+/// External Extensions` (chrome_paths.cc, DIR_EXTERNAL_EXTENSIONS), on Linux
+/// `/usr/share/google-chrome/extensions`. Helium reads macOS's too, and an entry there, read
+/// before its own, would win with Google's address: none is written there for it. Windows offers
+/// the extension through the registry (crates/nmhost).
+pub fn external_dirs(
+    home: &Path,
+    config: &Path,
+    mac: bool,
+    all_users: bool,
+) -> Vec<(PathBuf, &'static str)> {
+    external_dirs_in(Path::new("/"), home, config, mac, all_users)
+}
+
+/// `external_dirs`, with everyone's folders under `root` (`/`; a test's own folder).
+fn external_dirs_in(
+    root: &Path,
+    home: &Path,
+    config: &Path,
+    mac: bool,
+    all_users: bool,
+) -> Vec<(PathBuf, &'static str)> {
+    let system = |d: &str| root.join(d.trim_start_matches('/'));
+    if all_users {
+        // Chrome's folder for everyone, where Chrome is.
+        let (dir, chrome) = if mac {
+            (
+                "/Library/Application Support/Google/Chrome/External Extensions",
+                "/Applications/Google Chrome.app",
+            )
+        } else {
+            ("/usr/share/google-chrome/extensions", "/opt/google/chrome")
+        };
+        return if system(chrome).exists() {
+            vec![(system(dir), crate::extension::STORE_UPDATE_URL)]
+        } else {
+            Vec::new()
+        };
+    }
+    let support = home.join("Library/Application Support");
+    let mut dirs: Vec<(PathBuf, &'static str)> = Vec::new();
+    for b in BROWSERS {
+        let data: Vec<PathBuf> = match mac {
+            true if b.mac_user_external => b.mac_data.iter().map(|d| support.join(d)).collect(),
+            false if b.linux_user_external => {
+                b.linux_config.iter().map(|d| config.join(d)).collect()
+            }
+            _ => continue,
+        };
+        for d in data.into_iter().filter(|d| d.is_dir()) {
+            let d = d.join(USER_EXTERNAL);
+            if !dirs.iter().any(|(x, _)| *x == d) {
+                dirs.push((d, b.store_update_url));
+            }
+        }
+    }
+    dirs
+}
+
 /// Whether the host manifest at `manifest` starts `program` (the same file), and it runs.
 pub fn names_program(manifest: &Path, program: &Path) -> bool {
     let Some(named) = manifest_program(manifest) else {
@@ -551,6 +657,221 @@ pub fn manifest_program(manifest: &Path) -> Option<PathBuf> {
         Some(dir) if path.is_relative() => dir.join(path),
         _ => path,
     })
+}
+
+/// The native host's name, which its manifests and registry entries carry.
+pub const HOST_NAME: &str = "com.misterdownloadmanager.host";
+
+/// Windows: the registry keys the browsers look the native host up under (`<key>\HOST_NAME`'s
+/// default value: the manifest's path), under HKCU for one user or HKLM for everyone, each with
+/// the family whose manifest it names. Chromium-branded builds (Chromium, Helium, Thorium, Brave
+/// and Brave Origin with every channel) read Chromium's first, then Chrome's, as most other forks
+/// do (Chromium's `launch_context_win.cc`); Brave's own key is kept for builds that read it.
+/// Firefox and its forks read Mozilla's.
+pub const WINDOWS_HOST_KEYS: [(&str, Family); 5] = [
+    (
+        r"Software\Google\Chrome\NativeMessagingHosts",
+        Family::Chromium,
+    ),
+    (r"Software\Chromium\NativeMessagingHosts", Family::Chromium),
+    (
+        r"Software\Microsoft\Edge\NativeMessagingHosts",
+        Family::Chromium,
+    ),
+    (
+        r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+        Family::Chromium,
+    ),
+    (r"Software\Mozilla\NativeMessagingHosts", Family::Gecko),
+];
+
+/// Windows: the manifest a registry entry's value names (quotes and spaces around it dropped).
+pub fn registered_manifest(value: &str) -> PathBuf {
+    PathBuf::from(value.trim().trim_matches('"'))
+}
+
+/// What a browser finds where it looks for the native host (#818).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Holder {
+    /// A manifest naming a helper program that runs (this one).
+    Alive(PathBuf),
+    /// The manifest isn't there (or can't be read): the copy that wrote it is gone, such as one
+    /// run from inside a zip, whose temporary folder the archive tool deleted afterwards.
+    ManifestGone(PathBuf),
+    /// The manifest names a helper program that isn't there or can't be run, or the AppImage's
+    /// copy of the helper whose AppImage is gone (this path).
+    ProgramGone(PathBuf),
+}
+
+impl Holder {
+    /// What the manifest at `manifest` leads to.
+    pub fn of(manifest: &Path) -> Holder {
+        let Some(program) = manifest_program(manifest) else {
+            return Holder::ManifestGone(manifest.to_owned());
+        };
+        if !runs(&program) {
+            return Holder::ProgramGone(program);
+        }
+        // The AppImage's copy of the helper (crates/app/src/unix.rs) starts the AppImage named
+        // in `app-path` beside it when MDM isn't running.
+        #[cfg(unix)]
+        if let Ok(app) = std::fs::read(program.with_file_name("app-path")) {
+            use std::os::unix::ffi::OsStrExt;
+            let app = Path::new(std::ffi::OsStr::from_bytes(&app));
+            if !app.is_file() {
+                return Holder::ProgramGone(app.to_owned());
+            }
+        }
+        Holder::Alive(program)
+    }
+
+    /// The helper it leads to is gone: no browser can start it.
+    pub fn dead(&self) -> bool {
+        !matches!(self, Holder::Alive(_))
+    }
+}
+
+/// What a copy of MDM does at its start with one browser's registry entries on Windows (#818).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Repair {
+    /// Nothing: they work (whichever copy they name: two copies are both legitimate, and
+    /// neither takes the other's), or there are none (the setup's box was unticked).
+    Keep,
+    /// Point the user's entry at this copy: the one there leads nowhere, or there is none and
+    /// the computer's leads nowhere.
+    Take,
+    /// Remove the user's entry, which leads nowhere: the computer's works, and is read once the
+    /// user's is gone.
+    Clear,
+}
+
+/// The [`Repair`] for one browser's entries, the user's (HKCU) and the computer's (HKLM). The
+/// browsers read the user's first, and the computer's only when there is no user's: a user's
+/// that leads nowhere hides a computer's that works (Chromium's `launch_context_win.cc`).
+pub fn windows_repair(user: Option<&Holder>, machine: Option<&Holder>) -> Repair {
+    match (user, machine) {
+        (Some(Holder::Alive(_)), _) => Repair::Keep,
+        (Some(_), Some(Holder::Alive(_))) => Repair::Clear,
+        (Some(_), _) => Repair::Take,
+        (None, Some(m)) if m.dead() => Repair::Take,
+        (None, _) => Repair::Keep,
+    }
+}
+
+/// Linux and macOS, at MDM's start: whether `program` writes its manifest where `existing` is
+/// (None: there is none yet). One that works naming another copy is left alone; one naming this
+/// program is written again (its allowed extensions may have changed), and one that leads
+/// nowhere is taken over (#818).
+pub fn takes_over(existing: Option<&Holder>, program: &Path) -> bool {
+    match existing {
+        Some(Holder::Alive(named)) => same_file(named, program),
+        _ => true,
+    }
+}
+
+/// The same file, by its full path.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Whether `program` runs from a folder that is deleted soon after it quits (#818), where a
+/// registration would lead the browsers nowhere once it is gone: under the system's temporary
+/// folder (where WinRAR, 7-Zip, Windows Explorer and Linux's archive managers put a program run
+/// from inside an archive, and where macOS moves an app run from its download, App
+/// Translocation), or in an archive tool's own extraction folder wherever its temporary folder
+/// was set.
+pub fn in_temporary_folder(program: &Path) -> bool {
+    temporary(program, &temporary_folders())
+}
+
+/// The system's temporary folders: this process's, the system's own, and the usual ones.
+fn temporary_folders() -> Vec<PathBuf> {
+    let mut dirs = vec![std::env::temp_dir()];
+    for var in ["TMP", "TEMP", "TMPDIR"] {
+        if let Some(d) = std::env::var_os(var).filter(|d| !d.is_empty()) {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    if cfg!(windows) {
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            dirs.push(PathBuf::from(root).join("Temp"));
+        }
+    } else {
+        dirs.extend(["/tmp", "/var/tmp"].map(PathBuf::from));
+    }
+    dirs.retain(|d| d.is_absolute());
+    dirs
+}
+
+/// [`in_temporary_folder`] with the temporary folders given.
+fn temporary(program: &Path, temps: &[PathBuf]) -> bool {
+    let program = full_path(program);
+    let under = |dir: &PathBuf| {
+        let dir = full_path(dir);
+        if cfg!(windows) {
+            let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+            lower(&program).starts_with(lower(&dir))
+        } else {
+            program.starts_with(&dir)
+        }
+    };
+    let extracted = program
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .any(|c| archive_folder(&c.as_os_str().to_string_lossy()));
+    extracted || temps.iter().any(under)
+}
+
+/// A folder an archive tool extracts a program into to run it from inside the archive, and
+/// deletes afterwards: WinRAR's `Rar$EXa…` (`Rar$DIa…` for a drag), 7-Zip's `7zO…` / `7zE…`
+/// followed by hex digits, Windows Explorer's `Temp1_<name>.zip`.
+fn archive_folder(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let seven = lower.strip_prefix("7z").is_some_and(|rest| {
+        rest.len() >= 5
+            && rest.starts_with(['o', 'e', 's'])
+            && rest[1..].chars().all(|c| c.is_ascii_hexdigit())
+    });
+    let explorer = lower.strip_prefix("temp").is_some_and(|rest| {
+        rest.ends_with(".zip")
+            && rest
+                .split_once('_')
+                .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    lower.starts_with("rar$") || seven || explorer
+}
+
+/// `path` with its links and short names resolved (`C:\Users\MEGAPC~1` is `C:\Users\Mega PC`,
+/// macOS' `/tmp` is `/private/tmp`), without Windows' `\\?\` before a drive. A path that isn't
+/// there (yet) is resolved as far as it is, the rest kept as given, so it compares with a folder
+/// that is; as given when none of it can be read.
+fn full_path(path: &Path) -> PathBuf {
+    let mut there = path;
+    let mut rest = Vec::new();
+    let full = loop {
+        if let Ok(full) = std::fs::canonicalize(there) {
+            break rest
+                .iter()
+                .rev()
+                .fold(full, |p: PathBuf, name| p.join(name));
+        }
+        match (there.parent(), there.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name);
+                there = parent;
+            }
+            _ => break path.to_owned(),
+        }
+    };
+    let text = full.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => full,
+    }
 }
 
 #[cfg(test)]
@@ -875,6 +1196,111 @@ mod tests {
         assert_eq!(dirs(Some(&helper)), all(&[chrome, brave, opera, mozilla]));
     }
 
+    /// #685: Helium alone, on Linux, reads the package's manifest for everyone in Chromium's
+    /// folder (or Chrome's): no file of MDM's left in its own folder in the home.
+    #[cfg(unix)]
+    #[test]
+    fn a_manifest_for_everyone_covers_helium() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let (root, home) = (t.path().join("root"), t.path().join("home"));
+        std::fs::create_dir_all(home.join(".config/net.imput.helium")).unwrap();
+        let helper = root.join("usr/bin/misterdownloadmanager-nmhost");
+        std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        std::fs::write(&helper, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let dirs = || -> Vec<PathBuf> {
+            host_dirs_in(
+                &root,
+                &home,
+                &home.join(".config"),
+                false,
+                false,
+                Some(&helper),
+            )
+            .into_iter()
+            .map(|(d, _)| d.strip_prefix(&home).unwrap().to_owned())
+            .collect()
+        };
+        let own = PathBuf::from(".config/net.imput.helium/NativeMessagingHosts");
+        assert_eq!(dirs(), std::slice::from_ref(&own));
+        for etc in [ETC_CHROMIUM, ETC_CHROME] {
+            let dir = root.join(etc.trim_start_matches('/'));
+            std::fs::create_dir_all(&dir).unwrap();
+            let json = serde_json::json!({ "name": "x", "path": helper, "type": "stdio" });
+            std::fs::write(dir.join(HOST_MANIFEST), json.to_string()).unwrap();
+            assert!(dirs().is_empty(), "{etc}");
+            std::fs::remove_file(dir.join(HOST_MANIFEST)).unwrap();
+            assert_eq!(dirs(), std::slice::from_ref(&own));
+        }
+    }
+
+    /// #685: the external extension folders, each with the store's address as its browser names
+    /// it. One user: Chrome's only on macOS, Helium's own data folders (each channel's) on Linux
+    /// and macOS, only those there, by Helium's own name for the store. Everyone: Chrome's, for
+    /// Chrome only (Helium would read macOS's before its own).
+    #[test]
+    fn external_extension_folders() {
+        use crate::extension::{HELIUM_STORE_UPDATE_URL as HELIUM, STORE_UPDATE_URL as GOOGLE};
+        let t = tempfile::tempdir().unwrap();
+        let (root, home) = (t.path().join("root"), t.path().join("home"));
+        let config = home.join(".config");
+        let user = |mac| external_dirs_in(&root, &home, &config, mac, false);
+        let everyone = |mac| external_dirs_in(&root, &home, &config, mac, true);
+        assert!(user(false).is_empty() && user(true).is_empty());
+        assert!(everyone(false).is_empty() && everyone(true).is_empty());
+
+        // Linux: Chrome reads none in the home folder; Helium its own.
+        std::fs::create_dir_all(config.join("google-chrome")).unwrap();
+        assert!(user(false).is_empty());
+        std::fs::create_dir_all(config.join("net.imput.helium.dev")).unwrap();
+        std::fs::create_dir_all(config.join("net.imput.helium")).unwrap();
+        assert_eq!(
+            user(false),
+            [
+                (config.join("net.imput.helium/External Extensions"), HELIUM),
+                (
+                    config.join("net.imput.helium.dev/External Extensions"),
+                    HELIUM
+                ),
+            ]
+        );
+
+        // macOS: Chrome's and Helium's, each by its own name for the store.
+        let support = home.join("Library/Application Support");
+        std::fs::create_dir_all(support.join("net.imput.helium")).unwrap();
+        assert_eq!(
+            user(true),
+            [(support.join("net.imput.helium/External Extensions"), HELIUM)]
+        );
+        std::fs::create_dir_all(support.join("Google/Chrome")).unwrap();
+        assert_eq!(
+            user(true),
+            [
+                (support.join("Google/Chrome/External Extensions"), GOOGLE),
+                (support.join("net.imput.helium/External Extensions"), HELIUM),
+            ]
+        );
+
+        // Everyone's: Chrome's, only where Chrome is; never for Helium alone.
+        std::fs::create_dir_all(root.join("Applications/Helium.app")).unwrap();
+        std::fs::create_dir_all(root.join("opt/helium")).unwrap();
+        assert!(everyone(true).is_empty() && everyone(false).is_empty());
+        std::fs::create_dir_all(root.join("Applications/Google Chrome.app")).unwrap();
+        std::fs::create_dir_all(root.join("opt/google/chrome")).unwrap();
+        assert_eq!(
+            everyone(true),
+            [(
+                root.join("Library/Application Support/Google/Chrome/External Extensions"),
+                GOOGLE
+            )]
+        );
+        assert_eq!(
+            everyone(false),
+            [(root.join("usr/share/google-chrome/extensions"), GOOGLE)]
+        );
+    }
+
     /// The folders for everyone each browser reads are in the list the packages ship.
     #[test]
     fn every_browsers_system_folder_is_shipped() {
@@ -906,5 +1332,172 @@ mod tests {
             assert_eq!(manifest_program(&m), None, "{bad}");
         }
         assert_eq!(manifest_program(&d.path().join("none.json")), None);
+    }
+
+    /// #818: a copy run from inside an archive, or from anywhere under the temporary folder, is
+    /// in a folder that is deleted later; a copy in a folder of its own isn't.
+    #[test]
+    fn temporary_folders_are_found() {
+        let names = [
+            ("Rar$EXa34720.17029.rartemp", true),
+            ("Rar$DIa1234.5678", true),
+            ("7zO8A3B1C2D", true),
+            ("7zE0F12AB34", true),
+            ("Temp1_MisterDownloadManager-0.5.2-x64.zip", true),
+            ("Temp12_x.zip", true),
+            ("7-Zip", false),
+            ("7zip", false),
+            ("7zOops", false),
+            ("Templates", false),
+            ("Temp_x.zip", false),
+            ("MisterDownloadManager-0.5.2-x64", false),
+            ("Rar", false),
+        ];
+        for (name, archive) in names {
+            assert_eq!(archive_folder(name), archive, "{name}");
+        }
+        let (temp, home) = if cfg!(windows) {
+            (r"C:\Users\x\AppData\Local\Temp", r"C:\Users\x")
+        } else {
+            ("/tmp", "/home/x")
+        };
+        let temps = [PathBuf::from(temp)];
+        let at = |p: &str| Path::new(p).join("misterdownloadmanager.exe");
+        let rar = format!(r"{temp}/Rar$EXa34720.17029.rartemp/MisterDownloadManager-0.5.2-x64");
+        assert!(temporary(&at(&rar), &temps));
+        assert!(temporary(&at(&format!("{temp}/mdm")), &temps));
+        assert!(temporary(&at(temp), &temps));
+        // An archive tool's folder outside the temporary folder (WinRAR's own setting).
+        assert!(temporary(&at(&format!("{home}/rt/Rar$EXa1.2")), &temps));
+        assert!(!temporary(&at(&format!("{home}/MDM")), &temps));
+        assert!(!temporary(&at(&format!("{home}/Temporary/MDM")), &temps));
+        assert!(!temporary(&at(&format!("{temp}x/MDM")), &temps));
+        if cfg!(windows) {
+            let upper = r"C:\USERS\X\APPDATA\LOCAL\TEMP\mdm";
+            assert!(temporary(&at(upper), &temps), "Windows' paths ignore case");
+        }
+        // The folder itself, read through its links and short names, as the system gives it.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("copy")).unwrap();
+        let exe = d.path().join("copy").join("misterdownloadmanager.exe");
+        std::fs::write(&exe, b"").unwrap();
+        assert!(in_temporary_folder(&exe));
+        // A temporary folder reached through a link (macOS' /tmp is /private/tmp), with a path
+        // under it that isn't there.
+        #[cfg(unix)]
+        {
+            let real = d.path().join("real");
+            std::fs::create_dir(&real).unwrap();
+            let link = d.path().join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let gone = |dir: &Path| at(&dir.join("gone").to_string_lossy());
+            assert!(temporary(&gone(&link), std::slice::from_ref(&link)));
+            assert!(temporary(&gone(&link), std::slice::from_ref(&real)));
+            assert!(temporary(&gone(&real), &[link]));
+        }
+    }
+
+    fn manifest_naming(dir: &Path, program: &Path) -> PathBuf {
+        let m = dir.join(HOST_MANIFEST);
+        let json = serde_json::json!({ "name": HOST_NAME, "path": program, "type": "stdio" });
+        std::fs::write(&m, json.to_string()).unwrap();
+        m
+    }
+
+    fn program(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// #818: what a registration leads to: a helper that runs, or nothing (the manifest gone
+    /// with its temporary folder, or the helper it names gone).
+    #[test]
+    fn a_registration_leads_to_a_helper_or_nowhere() {
+        let d = tempfile::tempdir().unwrap();
+        let helper = d.path().join("mdm").join("misterdownloadmanager-nmhost");
+        program(&helper);
+        let m = manifest_naming(&d.path().join("mdm"), &helper);
+        assert_eq!(Holder::of(&m), Holder::Alive(helper.clone()));
+        assert!(!Holder::of(&m).dead());
+        let gone = d.path().join("Rar$EXa1.2").join(HOST_MANIFEST);
+        assert_eq!(Holder::of(&gone), Holder::ManifestGone(gone.clone()));
+        let missing = d.path().join("old").join("misterdownloadmanager-nmhost");
+        let m = manifest_naming(d.path(), &missing);
+        assert_eq!(Holder::of(&m), Holder::ProgramGone(missing));
+        assert!(Holder::of(&m).dead());
+        // The AppImage's copy of the helper, whose AppImage was deleted.
+        #[cfg(unix)]
+        {
+            let copy = d
+                .path()
+                .join("browser-host")
+                .join("misterdownloadmanager-nmhost");
+            program(&copy);
+            let image = d.path().join("MDM.AppImage");
+            program(&image);
+            std::fs::write(
+                copy.with_file_name("app-path"),
+                image.as_os_str().as_encoded_bytes(),
+            )
+            .unwrap();
+            let m = manifest_naming(&d.path().join("browser-host"), &copy);
+            assert_eq!(Holder::of(&m), Holder::Alive(copy.clone()));
+            std::fs::remove_file(&image).unwrap();
+            assert_eq!(Holder::of(&m), Holder::ProgramGone(image));
+        }
+    }
+
+    /// #818: Windows, at a start: only an entry that leads nowhere is repaired; one that works is
+    /// never taken, whichever copy it names; a user's that leads nowhere is removed when the
+    /// computer's works (the browsers read the user's first).
+    #[test]
+    fn only_a_dead_registration_is_repaired() {
+        let alive = Holder::Alive(PathBuf::from(r"C:\Other\misterdownloadmanager-nmhost.exe"));
+        let gone = Holder::ManifestGone(PathBuf::from(r"C:\Temp\Rar$EXa1\x.json"));
+        let helper = Holder::ProgramGone(PathBuf::from(r"C:\Old\misterdownloadmanager-nmhost.exe"));
+        use Repair::*;
+        for (user, machine, repair) in [
+            (None, None, Keep),
+            (Some(&alive), None, Keep),
+            (Some(&alive), Some(&gone), Keep),
+            (Some(&alive), Some(&alive), Keep),
+            (None, Some(&alive), Keep),
+            (Some(&gone), None, Take),
+            (Some(&helper), None, Take),
+            (Some(&gone), Some(&helper), Take),
+            (None, Some(&gone), Take),
+            (Some(&gone), Some(&alive), Clear),
+            (Some(&helper), Some(&alive), Clear),
+        ] {
+            assert_eq!(
+                windows_repair(user, machine),
+                repair,
+                "{user:?} {machine:?}"
+            );
+        }
+    }
+
+    /// #818: Linux and macOS, at a start: a manifest that works naming another copy stays; this
+    /// copy's own is written again, and one that leads nowhere is taken over.
+    #[test]
+    fn a_start_takes_over_only_what_leads_nowhere() {
+        let d = tempfile::tempdir().unwrap();
+        let me = d.path().join("me").join("misterdownloadmanager-nmhost");
+        let other = d.path().join("other").join("misterdownloadmanager-nmhost");
+        program(&me);
+        program(&other);
+        assert!(takes_over(None, &me));
+        assert!(takes_over(Some(&Holder::Alive(me.clone())), &me));
+        assert!(!takes_over(Some(&Holder::Alive(other.clone())), &me));
+        assert!(takes_over(Some(&Holder::ProgramGone(other)), &me));
+        assert!(takes_over(
+            Some(&Holder::ManifestGone(d.path().join("x.json"))),
+            &me
+        ));
     }
 }

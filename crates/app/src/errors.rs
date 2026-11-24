@@ -3,7 +3,7 @@
 //! event log. Every engine error is named here, so a new one can't reach the list untranslated.
 //! Data inside a message (status codes, paths, sizes) goes in as isolates (crate::i18n::fmt).
 
-use mdm_engine::{Error, NetKind, Refusal};
+use mdm_engine::{CertProblem, Error, NetKind, Refusal};
 
 use crate::i18n::{fmt, ltr, t};
 
@@ -61,14 +61,22 @@ pub fn describe(e: &Error) -> String {
             &[("path", &ltr(&path.display().to_string()))],
         ),
         Error::DriveGone => t("the drive or network share is no longer available").to_owned(),
-        Error::PathTooLong(path) => fmt(
-            t("the path is too long for Windows: {path}"),
-            &[("path", &ltr(&path.display().to_string()))],
-        ),
+        Error::PathTooLong(path) => path_too_long(path),
+        // i18n: why a download failed (#701): a file host answered with its own web page (a countdown before the link, a captcha, a sign-in) where the file was expected. The browser gets past it; MDM's browser extension then hands the real file back to MDM
         Error::GotWebPage => t(
-            "the server sent a web page instead of the file (sign-in needed or the link expired?)",
+            "the site sent a web page instead of the file (a waiting page, a captcha or a sign-in): open the link in your browser, finish there, and the download comes back to MDM",
         )
         .to_owned(),
+        Error::NotTheFile { size, sent } => fmt(
+            // i18n: why a download failed (#1460): the browser's own download of the link was a file of {size} (such as 117.65 MB), but when MDM asked the server for it, it sent only {sent} (such as 4.65 KB): an error or a notice, not the file. Some links work only once, or only in the browser. Alt+click: the link clicked with the Alt key held, which leaves the download to the browser
+            t(
+                "the server sent only {sent} where the browser's file is {size} (a link that works once, or only in the browser): Alt+click the link to let the browser download it",
+            ),
+            &[
+                ("sent", &crate::model::size(*sent)),
+                ("size", &crate::model::size(*size)),
+            ],
+        ),
         Error::RangesUnavailable => t("the server did not send the requested part").to_owned(),
         Error::LinkExpired => {
             t("the download link has expired (refresh the download address)").to_owned()
@@ -90,6 +98,7 @@ pub fn describe(e: &Error) -> String {
             // i18n: a download's error on a computer (a minimal Linux) without the certificates that secure connections check servers with; "ca-certificates" is the package's name, left as is
             t("this computer has no certificates to check the server with: install the ca-certificates package, then try again").to_owned()
         }
+        Error::Certificate(problem) => certificate(*problem).to_owned(),
         Error::Net { kind, cause } => {
             let what = match kind {
                 NetKind::Connect => t("cannot connect to the server"),
@@ -108,6 +117,77 @@ pub fn describe(e: &Error) -> String {
                 )
             }
         }
+    }
+}
+
+/// Why a download's path is too long (#1102), with the limit that is passed here: Windows'
+/// 259 characters a path while its long paths are off, else a name's 255 (characters on Windows,
+/// bytes on Linux and macOS). The files saved beside it while it downloads count: a part file, a
+/// video's streams and yt-dlp's own.
+fn path_too_long(path: &std::path::Path) -> String {
+    let limits = mdm_engine::naming::Limits::here();
+    let path = ltr(&path.display().to_string());
+    if cfg!(windows) && !mdm_engine::naming::long_paths() {
+        return fmt(
+            // i18n: why a download failed (#1102): the folder and file name together are longer than Windows allows ({limit} characters, 259), counting the temporary files saved beside the file while it downloads (their names are longer). {path} = the path
+            t(
+                "the path is too long for Windows: at most {limit} characters with the files saved while it downloads. Choose a shorter file name or folder ({path})",
+            ),
+            &[("limit", &ltr(&limits.path.to_string())), ("path", &path)],
+        );
+    }
+    let limit = ltr(&limits.name.to_string());
+    if limits.bytes {
+        fmt(
+            // i18n: why a download failed on Linux or macOS (#1102): the file name is longer than the system allows ({limit} bytes, 255; a letter can take several bytes), counting the temporary files saved beside the file while it downloads. {path} = the path
+            t(
+                "the file name is too long: at most {limit} bytes with the files saved while it downloads. Choose a shorter name ({path})",
+            ),
+            &[("limit", &limit), ("path", &path)],
+        )
+    } else {
+        fmt(
+            // i18n: why a download failed (#1102): the file name is longer than Windows allows ({limit} characters, 255), counting the temporary files saved beside the file while it downloads. {path} = the path
+            t(
+                "the file name is too long: at most {limit} characters with the files saved while it downloads. Choose a shorter name ({path})",
+            ),
+            &[("limit", &limit), ("path", &path)],
+        )
+    }
+}
+
+/// Why the server's certificate was refused (#762), in words a user can act on: a browser
+/// warns about the same, and MDM has no way around it.
+fn certificate(problem: CertProblem) -> &'static str {
+    match problem {
+        // i18n: why a download failed: the site's security certificate (what proves a secure, HTTPS, site is the one it says) is past its end date. Browsers warn about the same site
+        CertProblem::Expired => t(
+            "the site's security certificate has expired, so MDM can't be sure it's the real site (your browser warns about it too)",
+        ),
+        // i18n: why a download failed: the site's security certificate's validity hasn't begun; usually this computer's date or time is wrong
+        CertProblem::NotYetValid => t(
+            "the site's security certificate isn't valid yet: check this computer's date and time",
+        ),
+        // i18n: why a download failed: the site's security certificate was signed by the site itself or by an issuer this computer doesn't trust. Browsers warn about the same site
+        CertProblem::Untrusted => t(
+            "the site's security certificate isn't trusted (it's self-signed or from an unknown issuer), so MDM can't be sure it's the real site (your browser warns about it too)",
+        ),
+        // i18n: why a download failed: the site's security certificate was made for other site names than the one in the address
+        CertProblem::WrongName => t(
+            "the site's security certificate is for another site name, so MDM can't be sure it's the real site (your browser warns about it too)",
+        ),
+        CertProblem::Revoked => {
+            // i18n: why a download failed: the issuer of the site's security certificate took it back
+            t("the site's security certificate was revoked by its issuer, so MDM won't trust it")
+        }
+        // i18n: why a download failed: the site's security certificate is made for other uses than a website (its "extended key usage" leaves out web servers)
+        CertProblem::NotForWebsites => t(
+            "the site's security certificate isn't made for websites, so MDM can't be sure it's the real site",
+        ),
+        // i18n: why a download failed: the site's security certificate was refused for another reason (a bad signature, a broken certificate)
+        CertProblem::Other => t(
+            "the site's security certificate was refused, so MDM can't be sure it's the real site",
+        ),
     }
 }
 
@@ -157,6 +237,15 @@ pub fn service(service: &str, fault: &mdm_engine::ServiceFault) -> String {
                 &[("name", &ltr(name))],
             );
         }
+        F::ChosenFileMissing(path) => {
+            return fmt(
+                // i18n: a torrent through a debrid service: a file ticked in Add torrent isn't among the files the service has, so nothing was downloaded (rather than every file); {service} its name, {file} the file's path in the torrent
+                t(
+                    "{service} doesn't list {file}, chosen in Add torrent: nothing was downloaded. Add the torrent again with all its files, or without this one",
+                ),
+                &[("service", service), ("file", &crate::i18n::isolate(path))],
+            );
+        }
         F::Other(message) => {
             return fmt(
                 // i18n: a debrid service's error in its own words (English); {service} its name
@@ -196,6 +285,11 @@ fn refusal(r: &Refusal) -> String {
             t(
                 "this {site} link is a web page, not the file: open it in your browser and download from there",
             ),
+            &[("site", &ltr(site))],
+        ),
+        Refusal::NotTaken { site } => fmt(
+            // i18n: a download's error: a video site kept answering MDM's request for the file with its download page again; {site} = the site's name (LuluStream)
+            t("{site} didn't give the file this time: try again in a moment"),
             &[("site", &ltr(site))],
         ),
         Refusal::Service { service, fault } => self::service(service, fault),
@@ -254,6 +348,9 @@ pub fn adapter(e: &mdm_engine::NetError) -> String {
 /// errors in English, for the command line). File and build names stay as they are.
 pub fn tools(e: &mdm_tools::Error) -> String {
     use mdm_tools::Error as E;
+    if let Some((host, fault)) = e.network() {
+        return reach(&host, fault, cause_of(e).as_deref());
+    }
     match e {
         E::Http(e) => http(e),
         // i18n: error installing yt-dlp or ffmpeg; {error} = the system's reason
@@ -272,7 +369,7 @@ pub fn tools(e: &mdm_tools::Error) -> String {
             t("its release information is not as expected: {detail}"),
             &[("detail", detail)],
         ),
-        E::Download(text) => text.clone(),
+        E::Download { error, .. } => describe(error),
         E::Adapter(e) => adapter(e),
         // i18n: error: a program chosen as yt-dlp or ffmpeg didn't answer as one; {name} = yt-dlp or ffmpeg
         E::NotTheProgram(name) => fmt(t("this program isn't {name}"), &[("name", name)]),
@@ -285,6 +382,164 @@ pub fn tools(e: &mdm_tools::Error) -> String {
             t("{name} {version} is too old: MDM needs {oldest} or newer"),
             &[("name", name), ("version", version), ("oldest", oldest)],
         ),
+        E::Busy(name) => fmt(
+            // i18n: error: a helper (yt-dlp, ffmpeg, gallery-dl, Node.js) is being downloaded already, by MDM's automatic update or another copy of MDM; {name} = its name
+            t("{name} is being downloaded already: try again in a moment"),
+            &[("name", name)],
+        ),
+    }
+}
+
+/// Why a helper's server (`host`) couldn't be reached, by the kind of failure (#816): a failed
+/// connection through the proxy set in Options is that proxy's. `cause`: the system's words,
+/// kept for a failure of no known kind.
+fn reach(host: &str, fault: mdm_engine::fault::Fault, cause: Option<&str>) -> String {
+    use mdm_engine::fault::Fault as F;
+    if connecting(fault)
+        && let Some(proxy) = own_proxy()
+    {
+        return fmt(
+            // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: the proxy set in Options ({proxy}, its address) didn't let MDM connect
+            t("could not connect through the proxy {proxy}"),
+            &[("proxy", &ltr(&proxy))],
+        );
+    }
+    let text = match fault {
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server's name ({host}, such as api.github.com) wasn't found
+        F::NoSuchHost => t("{host} could not be found: no connection, or a network that blocks it"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}) or something on the way refused the connection
+        F::Refused => t("{host} refused the connection: a firewall, or a network that blocks it"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: the connection to its server ({host}) was cut as it opened
+        F::Reset => t("the connection to {host} was cut: a firewall, or a network that blocks it"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: there is no way to its server ({host}); the network may be down
+        F::Unreachable => t("{host} could not be reached: check the connection"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}) didn't answer in time
+        F::TimedOut => t("{host} did not answer in time"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: the secure connection to its server ({host}) failed, usually because an antivirus or a proxy reads secure (HTTPS) connections with a certificate of its own
+        F::Secure => t(
+            "the secure connection to {host} failed: an antivirus's web filter or a proxy may be reading HTTPS",
+        ),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}, such as api.github.com) turned the request away ({status}, such as "403 Forbidden"), usually for too many requests from the same network
+        F::Status(403 | 429) => {
+            t("{host} refused the request ({status}): too many requests from your network for now")
+        }
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}) answered with an HTTP error ({status}, such as "404 Not Found")
+        F::Status(_) => t("{host} answered {status}"),
+        // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: the connection to its server ({host}) closed before all of it came
+        F::CutShort => t("the download from {host} was cut short"),
+        F::Other => match cause {
+            Some(cause) => {
+                return fmt(
+                    // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}) couldn't be reached, for the system's reason {cause}
+                    t("could not reach {host} ({cause})"),
+                    &[("host", &ltr(host)), ("cause", cause)],
+                );
+            }
+            // i18n: a helper (yt-dlp, ffmpeg) couldn't be downloaded: its server ({host}) couldn't be reached
+            None => t("could not reach {host}"),
+        },
+    };
+    let status = match fault {
+        F::Status(code) => {
+            reqwest::StatusCode::from_u16(code).map_or_else(|_| code.to_string(), |s| s.to_string())
+        }
+        _ => String::new(),
+    };
+    fmt(text, &[("host", &ltr(host)), ("status", &ltr(&status))])
+}
+
+/// Whether `fault` is a connection that didn't open (through a proxy, the proxy's).
+fn connecting(fault: mdm_engine::fault::Fault) -> bool {
+    use mdm_engine::fault::Fault as F;
+    matches!(
+        fault,
+        F::NoSuchHost | F::Refused | F::Reset | F::Unreachable | F::TimedOut
+    )
+}
+
+/// The address (`host:port`) of the proxy Options → Proxy / Socks sets by hand for secure
+/// connections, which the helpers' all are.
+fn own_proxy() -> Option<String> {
+    match crate::settings::own_net().proxy {
+        mdm_engine::Proxy::Manual {
+            url, https: true, ..
+        } => {
+            let u = url::Url::parse(&url).ok()?;
+            let host = u.host_str()?;
+            Some(match u.port_or_known_default() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The system's words for a network failure of `e` (its deepest cause), without an address.
+fn cause_of(e: &mdm_tools::Error) -> Option<String> {
+    let mdm_tools::Error::Http(e) = e else {
+        return None;
+    };
+    let mut cause = None;
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        cause = Some(s.to_string());
+        source = s.source();
+    }
+    cause
+        .map(|c| os_text(&c))
+        .filter(|c| !c.is_empty() && !c.contains("://"))
+}
+
+/// What to do when helper `name` (yt-dlp, ffmpeg, gallery-dl) couldn't be downloaded (#816), for
+/// why; None when its message says it all (a disk's error, a release not as expected).
+pub fn tools_advice(e: &mdm_tools::Error, name: &str) -> Option<String> {
+    use mdm_engine::fault::Fault as F;
+    let fault = match e {
+        mdm_tools::Error::BadChecksum => F::CutShort,
+        _ => e.network()?.1,
+    };
+    let text = match fault {
+        // i18n: what to do when the proxy set in Options didn't let a helper's download connect; {proxy} = the Options tab Proxy / Socks; {name} = yt-dlp, ffmpeg or gallery-dl; {helpers} and {other} = the buttons Helpers and Use another program
+        f if connecting(f) && own_proxy().is_some() => t(
+            "Check the proxy in Options → {proxy}, or download {name} yourself and choose it in {helpers} → {other}.",
+        ),
+        // i18n: what to do when a helper couldn't be downloaded because its server limits requests; {name} = yt-dlp, ffmpeg or gallery-dl; {helpers} and {other} = the buttons Helpers and Use another program
+        F::Status(403 | 429) => t(
+            "Try again in an hour, or download {name} yourself and choose it in {helpers} → {other}.",
+        ),
+        // i18n: what to do when a helper's download failed on the way; {name} = yt-dlp, ffmpeg or gallery-dl; {helpers} and {other} = the buttons Helpers and Use another program
+        F::Status(_) | F::CutShort => {
+            t("Try again later, or download {name} yourself and choose it in {helpers} → {other}.")
+        }
+        // i18n: what to do when a helper's server couldn't be reached; {proxy} = the Options tab Proxy / Socks; {name} = yt-dlp, ffmpeg or gallery-dl; {helpers} and {other} = the buttons Helpers and Use another program
+        _ => t(
+            "If you use a proxy, set it in Options → {proxy}. Or download {name} yourself and choose it in {helpers} → {other}.",
+        ),
+    };
+    let label = |s: &str| t(s).trim_end_matches(['.', '…']).to_owned();
+    Some(fmt(
+        text,
+        &[
+            ("name", name),
+            ("proxy", &label("Proxy / Socks")),
+            ("helpers", &label("Helpers...")),
+            ("other", &label("Use another program...")),
+        ],
+    ))
+}
+
+/// [`tools`], then [`tools_advice`] when there is some: one text for a window that has room for
+/// it (or shows it whole on hover).
+pub fn tools_and_advice(e: &mdm_tools::Error, name: &str) -> String {
+    let problem = tools(e);
+    match tools_advice(e, name) {
+        Some(advice) => fmt(
+            // i18n: why a helper couldn't be downloaded ({problem}), then what to do about it ({advice}, whole sentences)
+            t("{problem}. {advice}"),
+            &[("problem", &problem), ("advice", &advice)],
+        ),
+        None => problem,
     }
 }
 
@@ -338,9 +593,79 @@ mod tests {
             message: "Too many users".into(),
         });
         assert!(describe(&quota).contains("Too many users"));
+        // #1460: both sizes, the server's answer's and the browser's file's.
+        let short = describe(&Error::NotTheFile {
+            size: 123_365_000,
+            sent: 4_762,
+        });
+        assert!(short.contains("117.65 MB") && short.contains("4.65 KB"));
         assert_eq!(
             os_text("Access is denied. (os error 5)"),
             "Access is denied"
         );
+    }
+
+    /// #1102: a path too long says so, with this system's limit and the path.
+    #[test]
+    fn a_path_too_long_says_the_limit() {
+        let path = std::path::PathBuf::from(format!("{}.mp4", "v".repeat(250)));
+        let said = describe(&Error::PathTooLong(path));
+        let limit = if cfg!(windows) { "259" } else { "255" };
+        assert!(said.contains(limit), "{said}");
+        assert!(said.contains(&"v".repeat(250)), "{said}");
+    }
+
+    /// #762: a refused certificate says it is the certificate, and what is wrong with it.
+    #[test]
+    fn a_refused_certificate_is_named() {
+        use mdm_engine::CertProblem as P;
+        let all = [
+            P::Expired,
+            P::NotYetValid,
+            P::Untrusted,
+            P::WrongName,
+            P::Revoked,
+            P::NotForWebsites,
+            P::Other,
+        ];
+        let said: Vec<String> = all
+            .iter()
+            .map(|p| describe(&Error::Certificate(*p)))
+            .collect();
+        for (p, s) in all.iter().zip(&said) {
+            assert!(s.contains("certificate"), "{p:?}: {s}");
+        }
+        assert!(said[0].contains("expired"));
+        assert!(said[2].contains("self-signed"));
+        assert!(said[3].contains("another site name"));
+        assert!(said[5].contains("isn't made for websites"));
+        let distinct: std::collections::HashSet<_> = said.iter().collect();
+        assert_eq!(distinct.len(), all.len());
+    }
+
+    /// #816: a helper that couldn't be downloaded names the server and why, and says what to do.
+    #[test]
+    fn a_helper_failure_names_its_server() {
+        let e = mdm_tools::Error::Download {
+            host: "api.github.com".into(),
+            error: Error::Status(reqwest::StatusCode::FORBIDDEN),
+        };
+        let text = tools(&e);
+        assert!(
+            text.contains("api.github.com") && text.contains("403"),
+            "{text}"
+        );
+        let advice = tools_advice(&e, "yt-dlp").unwrap();
+        assert!(
+            advice.contains("yt-dlp") && advice.contains("Use another program"),
+            "{advice}"
+        );
+        let cut = mdm_tools::Error::Download {
+            host: "github.com".into(),
+            error: Error::ShortBody,
+        };
+        assert!(tools(&cut).contains("cut short"));
+        let disk = mdm_tools::Error::Io(std::io::Error::other("full"));
+        assert!(tools_advice(&disk, "yt-dlp").is_none());
     }
 }

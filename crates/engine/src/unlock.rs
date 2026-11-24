@@ -20,13 +20,19 @@ pub trait Unlocker: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str;
 
     /// Today's direct address for `url`. `Ok(None)`: not for this service after all (it doesn't
-    /// support the host): the engine downloads `url` itself. `note` reports waits to the event log.
+    /// support the host): the engine downloads `url` itself. `note` reports waits to the event log,
+    /// with how far the service is (0 to 1) when it says: the list shows it while the link waits.
     fn unlock<'a>(
         &'a self,
         url: &'a Url,
-        note: &'a (dyn Fn(String) + Send + Sync),
+        note: &'a (dyn Fn(String, Option<f32>) + Send + Sync),
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<Option<Unlocked>, ServiceFault>>;
+
+    /// The event log's line for a link it gave (never the link itself).
+    fn noted(&self, u: &Unlocked) -> String {
+        note_unlocked(self.name(), u)
+    }
 }
 
 /// A service's direct link for a file.
@@ -40,6 +46,10 @@ pub struct Unlocked {
     pub size: Option<u64>,
     /// The most connections the service allows on it (Real-Debrid's `chunks`).
     pub max_connections: Option<u32>,
+    /// Headers the direct link wants on every request (a helper's: yt-dlp's `http_headers` and
+    /// cookies for a stream, #769). A service's links want none: the host's cookies and logins
+    /// never go to them.
+    pub headers: reqwest::header::HeaderMap,
 }
 
 /// Why a service didn't give the file (`Refusal::Service`).
@@ -77,6 +87,9 @@ pub enum ServiceFault {
     /// A torrent's file whose name can't be written safely in its folder (it climbs out of it,
     /// `../`): nothing is written.
     UnsafeName(String),
+    /// A torrent's file ticked in Add torrent that the service's list doesn't hold (by its path
+    /// in the torrent): nothing is downloaded rather than every file.
+    ChosenFileMissing(String),
     /// Anything else, in the service's own words.
     Other(String),
 }
@@ -115,6 +128,12 @@ impl std::fmt::Display for ServiceFault {
             }
             ServiceFault::UnsafeName(n) => {
                 return write!(f, "a file's name can't be written safely: {n}");
+            }
+            ServiceFault::ChosenFileMissing(p) => {
+                return write!(
+                    f,
+                    "a file chosen in Add torrent isn't in the service's list: {p}"
+                );
             }
             ServiceFault::Other(m) => return f.write_str(m),
         };
