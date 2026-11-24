@@ -571,6 +571,21 @@ These ship in the next version.
 
 - ✅ Sinhala, the 87th language: the app, its setup and uninstaller, Sri Lanka's flag,
   Windows' Nirmala UI for its script (machine translated, open to a native speaker's review)
+- ✅ A drive too full for a download says the space needed and the space free right
+- ✅ FTP: the 32-bit build never resumes a file over 4 GB at the wrong place
+- ✅ A file from a server without ranges is no longer failed as cut short when it starts over on one connection
+- ✅ Replacing a file never takes a paused download's name
+- ✅ Debrid torrents: a "ready" torrent with no files listed yet is asked again
+- ✅ Real-Debrid: a download waits out the service's maintenance for up to an hour
+- ✅ Premiumize: large torrents with many folders come down
+- ✅ Find: Sites searches the parent web page too
+- ✅ Sites Logins: a saved login is matched more carefully
+- ✅ Sites Logins: saved passwords are shown more discreetly
+- ✅ Sizes: a size that rounds up to the next unit is shown in it; 1 Byte in the singular
+- ✅ Tray panel: it stays on the screen its icon is on
+- ✅ Scheduler: a queue's Once at date is kept while its start time is off
+- ✅ Download limits: an empty box keeps the limit in force
+- ✅ Scheduler: a clock that goes back no longer runs every schedule time at once
 - ✅ Browser add-on: each Alt+click on the same link leaves its download to the browser
 - ✅ Browser add-on: a media row whose page changed says it is gone
 - ✅ Browser add-on: Hide on this video follows the video in a reused feed player
@@ -2045,6 +2060,9 @@ These ship in the next version.
   were; choosing one now redraws and publishes the group's new checked states in that same frame,
   and the arrow keys move between **Quick cut** / **Exact cut** and **Delete category**'s choices
   too ([#1692](https://github.com/anefzaoui/misterdownloadmanager/issues/1692))
+- ✅ Tests: the check of a live stream stopped after its recording was renamed no longer fails now
+  and then on Windows: the fake yt-dlp's copy of the recording is there only once it is whole and
+  closed, so the check never reads it while the copy still holds it
 
 ## Being worked on
 

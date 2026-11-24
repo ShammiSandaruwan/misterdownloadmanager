@@ -97,6 +97,21 @@ Each release's notes on GitHub come from its section here (`## [X.Y.Z]`, see
 
 ### Fixed
 
+- A drive too full for a download says how much space the download needs and how much the drive has, instead of a smaller need and 0 bytes free (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- FTP: the 32-bit build refuses to resume a file of 4 GB or more with a clear message, instead of resuming it at the wrong place (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- A file whose first bytes are read to see what it is (a .zip, for one), from a server without ranges that has to start over on one connection, is no longer failed as cut short (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- A download that replaces a file of the same name no longer takes the name of a paused download's file beside it: it takes the next free name (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Debrid torrents: a service that says a torrent is ready but lists no files is asked again, up to five times, instead of finishing an empty download and removing the torrent from the account (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Real-Debrid: an answer that the service is unavailable, without a reason (maintenance), is asked again every 5 minutes for up to an hour, said in the download's log, before the file is taken as gone (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Premiumize: a torrent's folders are listed up to 1000 (instead of 64), a folder without an id is skipped instead of failing the whole torrent, and a larger torrent downloads the files found and says in its log that the rest stay in the Premiumize cloud (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Find: **Sites** also searches the download's parent web page, as its checkbox says (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Sites Logins: a saved login is matched more carefully (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Options → Sites Logins: the list shows saved passwords more discreetly, and nothing for a login without one (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Sizes: a size just under 1 MB or 1 GB reads 1.00 MB or 1.00 GB instead of 1024.00 KB or 1024.00 MB (speeds too), and a one-byte file reads 1 Byte (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Linux and macOS: the tray panel opens on the screen, not half off its right edge, and stays on a screen left of the main one (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Scheduler: a queue's **Once at** date is kept while **Start download at** is unticked, so ticking it again gives the same date back instead of a daily queue (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Download limits: an empty box keeps the limit in force, in Options and in the Scheduler, instead of putting back 200 MB / 5 hours (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
+- Scheduler: a clock that goes back (summer time's end, a time sync, setting it by hand) no longer starts and stops every scheduled queue at once (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
 - Browser add-on: a new Alt+click on a link clicked with Alt a moment before leaves its download to the browser again, also when the download comes under another address (a page's script, a redirect) (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
 - Browser add-on: a media row whose page changed or whose tab closed while it was asked for says the video is gone, instead of a failure with no reason (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
 - Browser add-on: **Hide on this video** follows the video in a player a feed reuses for the next post, so the next post's video shows the button again; a video hidden before it had an address stays hidden once it gets one (thanks to [@riyazalsodie](https://github.com/riyazalsodie)).
