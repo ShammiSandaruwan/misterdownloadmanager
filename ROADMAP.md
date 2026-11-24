@@ -571,6 +571,13 @@ These ship in the next version.
 
 - ✅ Sinhala, the 87th language: the app, its setup and uninstaller, Sri Lanka's flag,
   Windows' Nirmala UI for its script (machine translated, open to a native speaker's review)
+- ✅ Browser add-on: each Alt+click on the same link leaves its download to the browser
+- ✅ Browser add-on: a media row whose page changed says it is gone
+- ✅ Browser add-on: Hide on this video follows the video in a reused feed player
+- ✅ Browser add-on: a full list of streams keeps each frame's first one
+- ✅ Browser add-on: the toolbar count stays while MDM is busy for a moment
+- ✅ Click'n'Load is checked more carefully
+- ✅ Browser detection copes with letters that grow when lowercased in a browser's program name
 - ✅ Linux and macOS: the running downloads' progress on MDM's icon in the dock (Ubuntu Dock,
   Dash to Dock, KDE Plasma's task manager and others) and in the macOS Dock, as on the Windows
   taskbar ([#1777](https://github.com/anefzaoui/misterdownloadmanager/issues/1777))
@@ -610,6 +617,9 @@ These ship in the next version.
 - ✅ CI and the release take NASM from nasm.us, checked against its pinned SHA256, and use
   Chocolatey's feed only when that download fails (its outage had stopped every Windows build)
 - ✅ Torrents: trackers are checked more carefully.
+- ✅ A **Columns** window for the download list (the header's **Columns...**, **View → Customize
+  URL List...**): which columns show and their order, from the keyboard too
+  ([#1566](https://github.com/anefzaoui/misterdownloadmanager/issues/1566))
 - ✅ A **Save To** column in the download list (the folder each download is in), sorted by a click
   on its title or **View → Arrange files → By Save Path**
   ([#1827](https://github.com/anefzaoui/misterdownloadmanager/issues/1827))
