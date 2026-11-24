@@ -569,6 +569,8 @@ Bug fixes from the first days of 0.5.0, a Safari extension, and more file types.
 
 These ship in the next version.
 
+- ✅ Sinhala, the 87th language: the app, its setup and uninstaller, Sri Lanka's flag,
+  Windows' Nirmala UI for its script (machine translated, open to a native speaker's review)
 - ✅ Pop-ups wait while a full-screen game, app or video, a presentation or the locked screen is
   on, and show when you're back, in the order they came; links from the browser and windows you
   open still show at once; **Options → Downloads** turns it off
